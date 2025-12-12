@@ -3,6 +3,8 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+from src.scanner.port_scanner import check_expected_ports
+
 
 class TestParseRustscanOutput:
     """Tests for _parse_rustscan_output method."""
