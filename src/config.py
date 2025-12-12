@@ -13,12 +13,17 @@ class Settings(BaseSettings):
     target_host: str = "example.com"
     scan_interval_hours: int = 2
 
-    # Scan performance tuning
+    # Scan performance tuning (nmap - used for UDP)
     scan_workers: int = 4           # Parallel nmap processes for TCP
     scan_timing: str = "4"          # Nmap timing template (3-5)
     scan_min_rate: int = 1000       # Min packets/second (0 to disable)
     scan_host_timeout: str = "30m"  # Max time per host
     scan_max_retries: int = 1       # Connection retries
+
+    # Rustscan performance tuning (used for TCP - much faster)
+    rustscan_batch_size: int = 1000    # Concurrent connections per batch (lower = more reliable)
+    rustscan_timeout: int = 3000       # Timeout per port in milliseconds
+    rustscan_ulimit: int = 5000        # File descriptor limit
 
     # Data storage
     data_dir: Path = Path("/app/data")

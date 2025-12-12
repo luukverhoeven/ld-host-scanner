@@ -1,7 +1,8 @@
-"""Port scanner using nmap."""
+"""Port scanner using Rustscan (TCP) and nmap (UDP)."""
 
 import asyncio
 import logging
+import subprocess
 import time
 import uuid
 from datetime import datetime
@@ -31,11 +32,111 @@ logger = logging.getLogger(__name__)
 
 
 class PortScanner:
-    """Nmap-based port scanner."""
+    """Port scanner using Rustscan (TCP) and nmap (UDP)."""
 
     def __init__(self):
         """Initialize the port scanner."""
         self.nm = nmap.PortScanner()
+
+    def scan_tcp_rustscan(self, target: str, ports: str = "1-65535") -> Dict:
+        """TCP scan using Rustscan for speed.
+
+        Rustscan is significantly faster than nmap for port discovery,
+        scanning all 65535 ports in seconds rather than minutes.
+
+        Args:
+            target: Hostname or IP address to scan.
+            ports: Port range to scan (default: all ports).
+
+        Returns:
+            Dictionary with host_status and list of discovered ports.
+        """
+        try:
+            logger.info("Starting Rustscan TCP scan of %s (ports %s)", target, ports)
+
+            # Build Rustscan command
+            # -a: target address
+            # -r: port range
+            # -g: greppable output (hostname -> [port1, port2, ...])
+            # -t: timeout per port in ms
+            # -b: batch size (concurrent connections)
+            # --ulimit: file descriptor limit
+            cmd = [
+                "rustscan",
+                "-a", target,
+                "-r", ports,
+                "-g",
+                "-t", str(settings.rustscan_timeout),
+                "-b", str(settings.rustscan_batch_size),
+                "--ulimit", str(settings.rustscan_ulimit),
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 minute max timeout
+            )
+
+            if result.returncode != 0 and result.stderr:
+                logger.warning("Rustscan stderr: %s", result.stderr.strip())
+
+            return self._parse_rustscan_output(target, result.stdout)
+
+        except subprocess.TimeoutExpired:
+            logger.error("Rustscan timed out for %s", target)
+            raise
+        except FileNotFoundError:
+            logger.error("Rustscan not found. Is it installed?")
+            raise
+        except Exception as e:
+            logger.error("Rustscan failed: %s", e)
+            raise
+
+    def _parse_rustscan_output(self, target: str, output: str) -> Dict:
+        """Parse Rustscan greppable output.
+
+        Greppable format: hostname -> [port1, port2, port3]
+
+        Args:
+            target: The scanned target.
+            output: Rustscan stdout output.
+
+        Returns:
+            Dictionary with host_status and list of port dictionaries.
+        """
+        results = {"host_status": "down", "ports": []}
+
+        if not output or not output.strip():
+            logger.warning("No output from Rustscan for %s", target)
+            return results
+
+        for line in output.strip().split("\n"):
+            if "->" in line:
+                results["host_status"] = "up"
+                # Parse: "hostname -> [80, 443, 8080]"
+                parts = line.split("->")
+                if len(parts) == 2:
+                    ports_str = parts[1].strip().strip("[]")
+                    if ports_str:
+                        for port_str in ports_str.split(","):
+                            port_str = port_str.strip()
+                            if port_str and port_str.isdigit():
+                                results["ports"].append({
+                                    "port": int(port_str),
+                                    "protocol": "tcp",
+                                    "state": "open",
+                                    "service": "unknown",
+                                    "version": "",
+                                })
+
+        logger.info(
+            "Rustscan found %d open TCP ports on %s",
+            len(results["ports"]),
+            target,
+        )
+
+        return results
 
     def check_host_online(self, target: str) -> bool:
         """Quick ping check to see if host is online.
@@ -337,16 +438,13 @@ async def run_full_scan() -> Optional[str]:
         # Save scan as running
         await save_scan(scan_id, target, "full", started_at, "running")
 
-        # Run TCP and UDP scans concurrently for faster execution
-        # TCP uses parallel batches if workers > 1
-        if settings.scan_workers > 1:
-            tcp_task = scan_tcp_parallel(target, settings.scan_workers)
-        else:
-            tcp_task = asyncio.to_thread(
-                scanner.scan_tcp, target, "1-65535"
-            )
+        # Run TCP (Rustscan) and UDP (nmap) scans concurrently
+        # Rustscan is much faster than nmap for TCP port discovery
+        tcp_task = asyncio.to_thread(
+            scanner.scan_tcp_rustscan, target, "1-65535"
+        )
 
-        # UDP scan (top 1000 ports - UDP is inherently slow)
+        # UDP scan uses nmap (top 1000 ports - UDP is inherently slow)
         udp_task = asyncio.to_thread(
             scanner.scan_udp, target, "1-1000"
         )
@@ -458,21 +556,31 @@ async def run_full_scan() -> Optional[str]:
 async def run_host_check() -> bool:
     """Quick host online/offline check.
 
+    Uses comprehensive check with TCP fallback when ICMP is blocked.
+
     Returns:
         True if host is online, False otherwise.
     """
     # Import here to avoid circular imports
     from src.notifications.notifier import send_host_status_notification
+    from src.scanner.host_checker import quick_host_check
 
     target = settings.target_host
-    scanner = PortScanner()
 
-    is_online = await asyncio.to_thread(scanner.check_host_online, target)
+    # Use comprehensive check with TCP fallback (ICMP often blocked by firewalls)
+    result = await quick_host_check(target)
+    is_online = result["status"] == "online"
 
     # Update host status metric
     host_online_status.labels(target=target).set(1 if is_online else 0)
 
-    logger.info("Host check for %s: %s", target, "online" if is_online else "offline")
+    logger.info(
+        "Host check for %s: %s (DNS: %s, TCP: %s)",
+        target,
+        result["status"],
+        result["dns_resolved"],
+        result["tcp_reachable"],
+    )
 
     # Send notification if host is offline
     if not is_online:

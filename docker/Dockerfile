@@ -28,15 +28,27 @@ LABEL description="Home Network Security Scanner"
 LABEL version="1.0.0"
 
 # Install runtime dependencies
-# - nmap: Port scanning
+# - nmap: Port scanning (used for UDP)
 # - nmap-scripts: Additional nmap scripts
 # - libcap: Linux capabilities support
 # - tzdata: Timezone support
+# - wget/unzip: For downloading and extracting Rustscan
 RUN apk add --no-cache \
     nmap \
     nmap-scripts \
     libcap \
-    tzdata
+    tzdata \
+    wget \
+    unzip
+
+# Install Rustscan for fast TCP port scanning
+# Rustscan scans all 65535 ports in seconds vs minutes with nmap
+RUN wget -q https://github.com/bee-san/RustScan/releases/download/2.4.1/x86_64-linux-rustscan.tar.gz.zip \
+    && unzip -q x86_64-linux-rustscan.tar.gz.zip \
+    && tar -xzf x86_64-linux-rustscan.tar.gz \
+    && mv rustscan /usr/local/bin/ \
+    && rm -f x86_64-linux-rustscan.tar.gz.zip x86_64-linux-rustscan.tar.gz \
+    && chmod +x /usr/local/bin/rustscan
 
 # Copy Python dependencies from builder
 COPY --from=builder /install /usr/local
