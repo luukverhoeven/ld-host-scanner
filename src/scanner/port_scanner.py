@@ -228,12 +228,13 @@ class PortScanner:
             # -sU: UDP scan
             # -sV: Version detection
             # -T{n}: Timing template (3-5)
-            # --open: Only show open ports
             # --max-retries: Limit retries (UDP is slow, keep at 1)
             # --min-rate: Use half of TCP rate for UDP
             # --host-timeout: Max time per host
+            # Note: We don't use --open for UDP because services like WireGuard
+            # don't respond to probes and show as "open|filtered"
             args = (
-                f"-sU -sV -T{settings.scan_timing} --open "
+                f"-sU -sV -T{settings.scan_timing} "
                 f"--max-retries 1"
             )
             if settings.scan_min_rate > 0:
@@ -287,13 +288,23 @@ class PortScanner:
         results["host_status"] = host.state()
 
         # Extract port information
+        # For UDP, we accept "open" and "open|filtered" states to catch
+        # services like WireGuard that don't respond to probes
+        allowed_states = ("open", "open|filtered")
+
         if protocol in host.all_protocols():
             for port_num in host[protocol].keys():
                 port_info = host[protocol][port_num]
+                state = port_info.get("state", "unknown")
+
+                # Only include ports that are likely open
+                if state not in allowed_states:
+                    continue
+
                 results["ports"].append({
                     "port": port_num,
                     "protocol": protocol,
-                    "state": port_info.get("state", "unknown"),
+                    "state": "open",  # Normalize to "open" for consistency
                     "service": port_info.get("name", "unknown"),
                     "version": port_info.get("version", ""),
                 })
