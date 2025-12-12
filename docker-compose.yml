@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  security-scanner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: security-scanner
+    restart: unless-stopped
+
+    # Required capabilities for nmap scanning
+    cap_add:
+      - NET_RAW        # Required for TCP SYN scans, ICMP ping
+      - NET_ADMIN      # Required for OS detection, advanced scans
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      # Persist scan history and database
+      - ./data:/app/data
+
+    environment:
+      # Target to scan
+      - TARGET_HOST=${TARGET_HOST:-example.com}
+
+      # Scan frequency (hours)
+      - SCAN_INTERVAL_HOURS=${SCAN_INTERVAL_HOURS:-2}
+
+      # Email notifications (SMTP)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_TO=${SMTP_TO:-}
+
+      # Webhook notifications (Discord/Slack)
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
+
+      # Timezone
+      - TZ=${TZ:-Europe/Amsterdam}
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Optional: Add network for isolation
+networks:
+  default:
+    name: security-scanner-network
