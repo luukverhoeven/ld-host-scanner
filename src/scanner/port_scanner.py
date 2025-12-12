@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -13,6 +14,17 @@ from src.storage.database import (
     save_scan,
     save_ports,
     detect_changes,
+    get_previous_missing_expected_ports,
+    detect_newly_missing_expected_ports,
+)
+from src.metrics import (
+    scans_total,
+    scan_duration_seconds,
+    open_ports_count,
+    port_changes_total,
+    expected_ports_missing,
+    expected_port_status,
+    host_online_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -172,6 +184,54 @@ class PortScanner:
         return results
 
 
+def check_expected_ports(
+    all_ports: List[Dict],
+    expected: List[Dict],
+) -> List[Dict]:
+    """Check which expected ports are missing from scan results.
+
+    Args:
+        all_ports: List of discovered open ports.
+        expected: List of expected ports to check.
+
+    Returns:
+        List of expected ports that are missing/closed.
+    """
+    open_ports = {(p["port"], p["protocol"]) for p in all_ports}
+    missing = []
+    for exp in expected:
+        if (exp["port"], exp["protocol"]) not in open_ports:
+            missing.append(exp)
+    return missing
+
+
+def update_expected_ports_metrics(
+    target: str,
+    expected_ports: List[Dict],
+    missing_ports: List[Dict],
+) -> None:
+    """Update Prometheus metrics for expected ports.
+
+    Args:
+        target: Target hostname.
+        expected_ports: List of configured expected ports.
+        missing_ports: List of expected ports that are currently missing.
+    """
+    missing_set = {(p["port"], p["protocol"]) for p in missing_ports}
+
+    # Update per-port status metrics
+    for exp in expected_ports:
+        is_open = (exp["port"], exp["protocol"]) not in missing_set
+        expected_port_status.labels(
+            target=target,
+            port=str(exp["port"]),
+            protocol=exp["protocol"],
+        ).set(1 if is_open else 0)
+
+    # Update total missing count
+    expected_ports_missing.labels(target=target).set(len(missing_ports))
+
+
 async def run_full_scan() -> Optional[str]:
     """Execute full TCP and UDP scan.
 
@@ -179,11 +239,15 @@ async def run_full_scan() -> Optional[str]:
         Scan ID if successful, None if failed.
     """
     # Import here to avoid circular imports
-    from src.notifications.notifier import send_notifications
+    from src.notifications.notifier import (
+        send_notifications,
+        send_missing_ports_notification,
+    )
 
     scan_id = str(uuid.uuid4())
     target = settings.target_host
     started_at = datetime.utcnow()
+    start_time = time.time()
 
     logger.info("Starting full scan %s for %s", scan_id, target)
 
@@ -224,13 +288,65 @@ async def run_full_scan() -> Optional[str]:
             completed_at=datetime.utcnow(),
         )
 
+        # Record scan duration metric
+        duration = time.time() - start_time
+        scan_duration_seconds.labels(scan_type="full").observe(duration)
+
+        # Update port count metrics
+        tcp_ports = [p for p in all_ports if p["protocol"] == "tcp"]
+        udp_ports = [p for p in all_ports if p["protocol"] == "udp"]
+        open_ports_count.labels(target=target, protocol="tcp").set(len(tcp_ports))
+        open_ports_count.labels(target=target, protocol="udp").set(len(udp_ports))
+
+        # Update host status metric
+        host_online_status.labels(target=target).set(1 if host_status == "up" else 0)
+
+        # Update port changes metrics
+        for change in changes:
+            port_changes_total.labels(change_type=change["change_type"]).inc()
+
+        # Record successful scan metric
+        scans_total.labels(status="completed", target=target).inc()
+
         # Send notifications if any open ports or changes detected
         if all_ports or changes:
             await send_notifications(scan_id, target, all_ports, changes, host_status)
 
+        # Check expected ports (only if configured)
+        if settings.expected_ports_configured:
+            expected_ports = settings.expected_ports_list
+            missing_ports = check_expected_ports(all_ports, expected_ports)
+
+            # Update expected ports metrics
+            update_expected_ports_metrics(target, expected_ports, missing_ports)
+
+            # Get previously missing ports to detect changes
+            previous_missing = await get_previous_missing_expected_ports(
+                target, scan_id, expected_ports
+            )
+
+            # Find newly missing ports (state changed from open to closed)
+            newly_missing = detect_newly_missing_expected_ports(
+                missing_ports, previous_missing
+            )
+
+            # Only notify for newly missing ports (not every scan)
+            if newly_missing:
+                logger.warning(
+                    "Expected ports newly missing: %s",
+                    ", ".join(f"{p['port']}/{p['protocol']}" for p in newly_missing),
+                )
+                await send_missing_ports_notification(target, newly_missing)
+            elif missing_ports:
+                logger.info(
+                    "Expected ports still missing (no change): %s",
+                    ", ".join(f"{p['port']}/{p['protocol']}" for p in missing_ports),
+                )
+
         logger.info(
-            "Scan %s completed. Found %d open ports, %d changes",
+            "Scan %s completed in %.1fs. Found %d open ports, %d changes",
             scan_id,
+            duration,
             len(all_ports),
             len(changes),
         )
@@ -239,6 +355,7 @@ async def run_full_scan() -> Optional[str]:
 
     except Exception as e:
         logger.error("Scan %s failed: %s", scan_id, e)
+        scans_total.labels(status="failed", target=target).inc()
         await save_scan(
             scan_id,
             target,
@@ -264,6 +381,9 @@ async def run_host_check() -> bool:
     scanner = PortScanner()
 
     is_online = await asyncio.to_thread(scanner.check_host_online, target)
+
+    # Update host status metric
+    host_online_status.labels(target=target).set(1 if is_online else 0)
 
     logger.info("Host check for %s: %s", target, "online" if is_online else "offline")
 

@@ -4,7 +4,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from src.config import settings
-from src.storage.database import get_recent_scans, get_port_history, get_current_status
+from src.storage.database import (
+    get_recent_scans,
+    get_port_history,
+    get_current_status,
+    get_expected_ports_status,
+)
 from src.web.app import templates
 
 router = APIRouter()
@@ -16,6 +21,14 @@ async def dashboard(request: Request):
     scans = await get_recent_scans(limit=10)
     status = await get_current_status(settings.target_host)
 
+    # Get expected ports status if configured
+    expected_ports_status = None
+    if settings.expected_ports_configured:
+        expected_ports_status = await get_expected_ports_status(
+            settings.target_host,
+            settings.expected_ports_list,
+        )
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -24,6 +37,7 @@ async def dashboard(request: Request):
             "status": status,
             "recent_scans": scans,
             "scan_interval": settings.scan_interval_hours,
+            "expected_ports_status": expected_ports_status,
         },
     )
 

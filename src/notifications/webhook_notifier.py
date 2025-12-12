@@ -300,3 +300,91 @@ async def send_host_offline_webhook(target: str) -> bool:
         )
 
         return False
+
+
+async def send_missing_ports_webhook(target: str, missing_ports: List[Dict]) -> bool:
+    """Send webhook alert when expected ports are not open.
+
+    Args:
+        target: Target hostname/IP.
+        missing_ports: List of expected ports that are missing/closed.
+
+    Returns:
+        True if webhook sent successfully, False otherwise.
+    """
+    if not settings.webhook_configured:
+        logger.debug("Webhook not configured, skipping notification")
+        return False
+
+    webhook_url = settings.webhook_url
+
+    port_list = ", ".join(
+        f"{p['port']}/{p['protocol']}" for p in missing_ports
+    )
+
+    if _is_slack_webhook(webhook_url):
+        port_fields = "\n".join(
+            f"• {p['port']}/{p['protocol']}"
+            for p in missing_ports
+        )
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",
+                "title": f"ALERT: Expected ports CLOSED on {target}",
+                "text": "The following expected ports are no longer open.",
+                "fields": [
+                    {"title": "Target", "value": target, "short": True},
+                    {"title": "Missing Ports", "value": str(len(missing_ports)), "short": True},
+                    {"title": "Ports", "value": port_fields, "short": False},
+                ],
+                "ts": int(datetime.utcnow().timestamp()),
+            }],
+        }
+    else:
+        port_fields = "\n".join(
+            f"`{p['port']}/{p['protocol']}`"
+            for p in missing_ports
+        )
+        payload = {
+            "embeds": [{
+                "title": "Expected Ports Alert",
+                "description": f"Expected ports are no longer open on **{target}**",
+                "color": 16711680,  # Red
+                "timestamp": datetime.utcnow().isoformat(),
+                "fields": [
+                    {"name": "Target", "value": f"`{target}`", "inline": True},
+                    {"name": "Missing Count", "value": str(len(missing_ports)), "inline": True},
+                    {"name": "Missing Ports", "value": port_fields, "inline": False},
+                ],
+            }],
+        }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                webhook_url,
+                json=payload,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+
+        logger.info("Missing ports webhook sent")
+
+        await save_notification(
+            notification_type="webhook",
+            status="sent",
+            message=f"Missing ports alert for {target}: {port_list}",
+        )
+
+        return True
+
+    except Exception as e:
+        logger.error("Failed to send missing ports webhook: %s", e)
+
+        await save_notification(
+            notification_type="webhook",
+            status="failed",
+            error_message=str(e),
+        )
+
+        return False

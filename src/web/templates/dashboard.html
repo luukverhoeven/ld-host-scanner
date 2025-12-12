@@ -41,6 +41,53 @@
             </div>
         </div>
 
+        <!-- Expected Ports Card (only shown if configured) -->
+        {% if expected_ports_status %}
+        <div class="card expected-ports-card">
+            <div class="card-header">
+                <h2>Expected Ports</h2>
+            </div>
+            <div class="card-body">
+                {% if expected_ports_status.last_check %}
+                <div class="status-indicator {{ 'up' if expected_ports_status.all_open else 'down' }}">
+                    <span class="status-dot"></span>
+                    <span class="status-text">
+                        {% if expected_ports_status.all_open %}
+                        ALL OPEN
+                        {% else %}
+                        {{ expected_ports_status.missing_ports|length }} MISSING
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="expected-ports-details">
+                    {% if expected_ports_status.missing_ports %}
+                    <div class="missing-ports-alert">
+                        <strong>Missing Ports:</strong>
+                        <ul class="port-list missing">
+                            {% for port in expected_ports_status.missing_ports %}
+                            <li><code>{{ port.port }}/{{ port.protocol }}</code></li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                    {% if expected_ports_status.open_ports %}
+                    <div class="open-expected-ports">
+                        <strong>Open:</strong>
+                        <ul class="port-list open">
+                            {% for port in expected_ports_status.open_ports %}
+                            <li><code>{{ port.port }}/{{ port.protocol }}</code> ({{ port.service or '-' }})</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="no-data">No scan data available yet</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Actions Card -->
         <div class="card actions-card">
             <div class="card-header">

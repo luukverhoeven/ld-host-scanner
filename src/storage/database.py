@@ -369,3 +369,152 @@ async def save_notification(
         )
         session.add(notification)
         await session.commit()
+
+
+async def get_previous_missing_expected_ports(
+    target: str,
+    current_scan_id: str,
+    expected_ports: List[Dict],
+) -> List[Dict]:
+    """Get which expected ports were missing in the previous scan.
+
+    Args:
+        target: Target hostname.
+        current_scan_id: Current scan ID to exclude.
+        expected_ports: List of expected ports to check.
+
+    Returns:
+        List of expected ports that were missing in the previous scan.
+    """
+    async with await get_session() as session:
+        # Get the previous completed scan
+        prev_scan_result = await session.execute(
+            select(Scan)
+            .where(Scan.target == target)
+            .where(Scan.status == "completed")
+            .where(Scan.scan_id != current_scan_id)
+            .order_by(desc(Scan.completed_at))
+            .limit(1)
+        )
+        prev_scan = prev_scan_result.scalar_one_or_none()
+
+        if not prev_scan:
+            # First scan, all expected ports were "missing" before (new state)
+            # Return empty to indicate nothing was previously missing
+            return []
+
+        # Get open ports from previous scan
+        prev_ports_result = await session.execute(
+            select(Port)
+            .where(Port.scan_id == prev_scan.scan_id)
+            .where(Port.state == "open")
+        )
+        prev_open_ports = {
+            (p.port, p.protocol) for p in prev_ports_result.scalars().all()
+        }
+
+        # Find which expected ports were missing in the previous scan
+        missing_in_prev = []
+        for exp in expected_ports:
+            if (exp["port"], exp["protocol"]) not in prev_open_ports:
+                missing_in_prev.append(exp)
+
+        return missing_in_prev
+
+
+def detect_newly_missing_expected_ports(
+    current_missing: List[Dict],
+    previous_missing: List[Dict],
+) -> List[Dict]:
+    """Detect expected ports that are newly missing (went from open to closed).
+
+    Args:
+        current_missing: Expected ports currently missing.
+        previous_missing: Expected ports that were missing in previous scan.
+
+    Returns:
+        List of expected ports that are newly missing (state changed).
+    """
+    # Convert previous missing to a set for quick lookup
+    prev_missing_set = {
+        (p["port"], p["protocol"]) for p in previous_missing
+    }
+
+    # Find ports that are missing now but were NOT missing before
+    newly_missing = []
+    for port in current_missing:
+        if (port["port"], port["protocol"]) not in prev_missing_set:
+            newly_missing.append(port)
+
+    return newly_missing
+
+
+async def get_expected_ports_status(
+    target: str,
+    expected_ports: List[Dict],
+) -> Dict:
+    """Get the current status of expected ports.
+
+    Args:
+        target: Target hostname.
+        expected_ports: List of expected ports to check.
+
+    Returns:
+        Dict with status information including open and missing ports.
+    """
+    async with await get_session() as session:
+        # Get the latest completed scan
+        scan_result = await session.execute(
+            select(Scan)
+            .where(Scan.target == target)
+            .where(Scan.status == "completed")
+            .order_by(desc(Scan.completed_at))
+            .limit(1)
+        )
+        scan = scan_result.scalar_one_or_none()
+
+        if not scan:
+            return {
+                "configured": True,
+                "last_check": None,
+                "all_open": None,
+                "open_ports": [],
+                "missing_ports": expected_ports,
+            }
+
+        # Get open ports from the scan
+        ports_result = await session.execute(
+            select(Port)
+            .where(Port.scan_id == scan.scan_id)
+            .where(Port.state == "open")
+        )
+        open_ports = {
+            (p.port, p.protocol): p for p in ports_result.scalars().all()
+        }
+
+        # Check which expected ports are open/missing
+        open_expected = []
+        missing_expected = []
+
+        for exp in expected_ports:
+            key = (exp["port"], exp["protocol"])
+            if key in open_ports:
+                port = open_ports[key]
+                open_expected.append({
+                    "port": exp["port"],
+                    "protocol": exp["protocol"],
+                    "service": port.service,
+                })
+            else:
+                missing_expected.append({
+                    "port": exp["port"],
+                    "protocol": exp["protocol"],
+                })
+
+        return {
+            "configured": True,
+            "last_check": scan.completed_at,
+            "all_open": len(missing_expected) == 0,
+            "open_ports": open_expected,
+            "missing_ports": missing_expected,
+        }

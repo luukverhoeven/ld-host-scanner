@@ -358,6 +358,52 @@ body {
     font-size: 0.9rem;
 }
 
+/* Expected Ports Card */
+.expected-ports-card .status-indicator.up .status-text {
+    color: var(--success-color);
+}
+
+.expected-ports-card .status-indicator.down .status-text {
+    color: var(--danger-color);
+}
+
+.expected-ports-details {
+    margin-top: 1rem;
+}
+
+.port-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0;
+}
+
+.port-list li {
+    padding: 0.25rem 0;
+}
+
+.port-list.missing li {
+    color: var(--danger-color);
+}
+
+.port-list.open li {
+    color: var(--success-color);
+}
+
+.missing-ports-alert {
+    background-color: rgba(231, 76, 60, 0.1);
+    padding: 0.75rem 1rem;
+    border-radius: var(--border-radius);
+    margin-bottom: 1rem;
+    border-left: 4px solid var(--danger-color);
+}
+
+.open-expected-ports {
+    background-color: rgba(39, 174, 96, 0.1);
+    padding: 0.75rem 1rem;
+    border-radius: var(--border-radius);
+    border-left: 4px solid var(--success-color);
+}
+
 /* Footer */
 .footer {
     background-color: var(--dark-color);

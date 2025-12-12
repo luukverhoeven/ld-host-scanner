@@ -1,6 +1,8 @@
 """Health check routes."""
 
 from fastapi import APIRouter
+from fastapi.responses import Response
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from pydantic import BaseModel
 
 from src.scheduler.job_scheduler import get_scheduler
@@ -42,3 +44,15 @@ async def readiness_check():
 async def liveness_check():
     """Liveness check - always returns OK if app is running."""
     return {"alive": True}
+
+
+@router.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus metrics endpoint.
+
+    Returns metrics in Prometheus exposition format for scraping.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )

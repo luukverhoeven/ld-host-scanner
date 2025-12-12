@@ -3,8 +3,17 @@
 import logging
 from typing import Dict, List
 
-from src.notifications.email_notifier import send_email_alert, send_host_offline_email
-from src.notifications.webhook_notifier import send_webhook_alert, send_host_offline_webhook
+from src.notifications.email_notifier import (
+    send_email_alert,
+    send_host_offline_email,
+    send_missing_ports_email,
+)
+from src.notifications.webhook_notifier import (
+    send_webhook_alert,
+    send_host_offline_webhook,
+    send_missing_ports_webhook,
+)
+from src.metrics import notifications_sent_total, notifications_failed_total
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +56,15 @@ async def send_notifications(
     )
     results.append(("webhook", webhook_result))
 
-    # Log results
+    # Log results and update metrics
     sent = [name for name, success in results if success]
     failed = [name for name, success in results if not success]
+
+    for name, success in results:
+        if success:
+            notifications_sent_total.labels(channel=name, type="scan").inc()
+        else:
+            notifications_failed_total.labels(channel=name, type="scan").inc()
 
     if sent:
         logger.info("Notifications sent via: %s", ", ".join(sent))
@@ -66,9 +81,49 @@ async def send_host_status_notification(target: str, status: str) -> None:
     """
     if status == "offline":
         # Send offline alerts
-        await send_host_offline_email(target)
-        await send_host_offline_webhook(target)
+        email_result = await send_host_offline_email(target)
+        webhook_result = await send_host_offline_webhook(target)
+
+        # Update metrics
+        if email_result:
+            notifications_sent_total.labels(channel="email", type="host_offline").inc()
+        else:
+            notifications_failed_total.labels(channel="email", type="host_offline").inc()
+
+        if webhook_result:
+            notifications_sent_total.labels(channel="webhook", type="host_offline").inc()
+        else:
+            notifications_failed_total.labels(channel="webhook", type="host_offline").inc()
+
         logger.warning("Host offline notifications sent for %s", target)
     else:
         # Could add "back online" notifications here in the future
         logger.info("Host %s is %s", target, status)
+
+
+async def send_missing_ports_notification(target: str, missing_ports: List[Dict]) -> None:
+    """Send notification when expected ports are missing/closed.
+
+    Args:
+        target: Target hostname/IP.
+        missing_ports: List of expected ports that are missing/closed.
+    """
+    # Send email notification
+    email_result = await send_missing_ports_email(target, missing_ports)
+
+    # Send webhook notification
+    webhook_result = await send_missing_ports_webhook(target, missing_ports)
+
+    # Update metrics
+    if email_result:
+        notifications_sent_total.labels(channel="email", type="missing_ports").inc()
+    else:
+        notifications_failed_total.labels(channel="email", type="missing_ports").inc()
+
+    if webhook_result:
+        notifications_sent_total.labels(channel="webhook", type="missing_ports").inc()
+    else:
+        notifications_failed_total.labels(channel="webhook", type="missing_ports").inc()
+
+    port_list = ", ".join(f"{p['port']}/{p['protocol']}" for p in missing_ports)
+    logger.warning("Missing ports notifications sent for %s: %s", target, port_list)

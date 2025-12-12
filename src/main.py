@@ -2,19 +2,49 @@
 
 import logging
 import sys
+from datetime import datetime
 
 import uvicorn
 
 from src.config import settings
 
+
+def configure_logging():
+    """Configure logging based on settings."""
+    log_level = getattr(logging, settings.log_level.upper())
+
+    if settings.log_format == "json":
+        from pythonjsonlogger import jsonlogger
+
+        class CustomJsonFormatter(jsonlogger.JsonFormatter):
+            """Custom JSON formatter with additional fields."""
+
+            def add_fields(self, log_record, record, message_dict):
+                super().add_fields(log_record, record, message_dict)
+                log_record["timestamp"] = datetime.utcnow().isoformat() + "Z"
+                log_record["level"] = record.levelname
+                log_record["logger"] = record.name
+                log_record["service"] = "security-scanner"
+
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(CustomJsonFormatter(
+            "%(timestamp)s %(level)s %(name)s %(message)s"
+        ))
+        logging.root.handlers = []
+        logging.root.addHandler(handler)
+        logging.root.setLevel(log_level)
+    else:
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            handlers=[
+                logging.StreamHandler(sys.stdout),
+            ],
+        )
+
+
 # Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
-)
+configure_logging()
 
 # Reduce noise from third-party loggers
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
@@ -31,6 +61,10 @@ def main():
     logger.info("Scan interval: %d hours", settings.scan_interval_hours)
     logger.info("SMTP configured: %s", settings.smtp_configured)
     logger.info("Webhook configured: %s", settings.webhook_configured)
+    logger.info("Expected ports configured: %s", settings.expected_ports_configured)
+    if settings.expected_ports_configured:
+        logger.info("Expected ports: %s", settings.expected_ports)
+    logger.info("Log format: %s", settings.log_format)
 
     # Import app here to ensure logging is configured first
     from src.web.app import app

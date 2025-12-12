@@ -272,3 +272,122 @@ async def send_host_offline_email(target: str) -> bool:
         )
 
         return False
+
+
+async def send_missing_ports_email(target: str, missing_ports: List[Dict]) -> bool:
+    """Send email alert when expected ports are not open.
+
+    Args:
+        target: Target hostname/IP.
+        missing_ports: List of expected ports that are missing/closed.
+
+    Returns:
+        True if email sent successfully, False otherwise.
+    """
+    if not settings.smtp_configured:
+        logger.debug("SMTP not configured, skipping email notification")
+        return False
+
+    port_list = ", ".join(
+        f"{p['port']}/{p['protocol']}" for p in missing_ports
+    )
+    subject = f"ALERT: Expected ports CLOSED on {target}"
+
+    # Build port table for missing ports
+    port_rows = "".join(
+        f"<tr>"
+        f"<td style='padding: 8px; border: 1px solid #ddd;'>{p['port']}</td>"
+        f"<td style='padding: 8px; border: 1px solid #ddd;'>{p['protocol'].upper()}</td>"
+        f"</tr>"
+        for p in missing_ports
+    )
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;'>
+        <div style='background-color: #e74c3c; color: white; padding: 20px; border-radius: 5px 5px 0 0;'>
+            <h1 style='margin: 0;'>Expected Ports Alert</h1>
+        </div>
+
+        <div style='background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd;'>
+            <h2 style='margin-top: 0; color: #e74c3c;'>Target: {target}</h2>
+
+            <p style='font-size: 18px;'>
+                The following expected ports are no longer open:
+            </p>
+
+            <table style='border-collapse: collapse; width: 100%; margin: 10px 0;'>
+                <thead>
+                    <tr style='background-color: #f4f4f4;'>
+                        <th style='padding: 8px; border: 1px solid #ddd; text-align: left;'>Port</th>
+                        <th style='padding: 8px; border: 1px solid #ddd; text-align: left;'>Protocol</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {port_rows}
+                </tbody>
+            </table>
+
+            <p>This could indicate:</p>
+            <ul>
+                <li>Service has stopped or crashed</li>
+                <li>Firewall configuration changed</li>
+                <li>Service is overloaded or unresponsive</li>
+                <li>Network issues blocking specific ports</li>
+            </ul>
+
+            <p style='color: #7f8c8d; font-size: 12px; margin-top: 20px;'>
+                Expected ports: {port_list}
+            </p>
+        </div>
+
+        <div style='background-color: #ecf0f1; padding: 10px; text-align: center; border-radius: 0 0 5px 5px;'>
+            <p style='margin: 0; color: #7f8c8d; font-size: 12px;'>
+                Security Scanner - Automated Network Monitoring
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = subject
+    message["From"] = settings.smtp_from
+    message["To"] = settings.smtp_to
+    message.attach(MIMEText(html_content, "html"))
+
+    try:
+        await aiosmtplib.send(
+            message,
+            hostname=settings.smtp_host,
+            port=settings.smtp_port,
+            username=settings.smtp_user,
+            password=settings.smtp_password,
+            start_tls=True,
+        )
+
+        logger.info("Missing ports email sent to %s", settings.smtp_to)
+
+        await save_notification(
+            notification_type="email",
+            status="sent",
+            subject=subject,
+        )
+
+        return True
+
+    except Exception as e:
+        logger.error("Failed to send missing ports email: %s", e)
+
+        await save_notification(
+            notification_type="email",
+            status="failed",
+            subject=subject,
+            error_message=str(e),
+        )
+
+        return False
