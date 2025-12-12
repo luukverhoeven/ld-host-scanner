@@ -107,3 +107,15 @@ class Notification(Base):
     status = Column(String(20), nullable=False)  # 'sent', 'failed'
     error_message = Column(Text, nullable=True)
     sent_at = Column(DateTime, default=datetime.utcnow)
+
+
+class HostStatus(Base):
+    """Real-time host status from quick checks."""
+
+    __tablename__ = "host_status"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    target = Column(String(255), nullable=False, unique=True, index=True)
+    status = Column(String(20), nullable=False)  # 'online', 'offline', 'dns_only'
+    last_check = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

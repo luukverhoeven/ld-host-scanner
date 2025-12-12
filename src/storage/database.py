@@ -8,7 +8,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from src.config import settings
-from src.storage.models import Base, Scan, Port, PortChange, Notification
+from src.storage.models import Base, Scan, Port, PortChange, Notification, HostStatus
 
 logger = logging.getLogger(__name__)
 
@@ -311,32 +311,52 @@ async def get_port_history(limit: int = 50) -> List[Dict]:
 
 
 async def get_current_status(target: str) -> Optional[Dict]:
-    """Get current status of target."""
+    """Get current status of target using real-time host check status."""
     async with await get_session() as session:
-        result = await session.execute(
+        # Get real-time host status from quick checks
+        host_status_result = await session.execute(
+            select(HostStatus).where(HostStatus.target == target)
+        )
+        host_status_record = host_status_result.scalar_one_or_none()
+
+        # Get latest completed scan for port data
+        scan_result = await session.execute(
             select(Scan)
             .where(Scan.target == target)
             .where(Scan.status == "completed")
             .order_by(desc(Scan.completed_at))
             .limit(1)
         )
-        scan = result.scalar_one_or_none()
+        scan = scan_result.scalar_one_or_none()
 
-        if not scan:
+        # Determine host status: prefer real-time check, fallback to scan
+        if host_status_record:
+            # Map quick check status to dashboard status
+            status = "up" if host_status_record.status == "online" else "down"
+            status_time = host_status_record.last_check
+        elif scan:
+            status = scan.host_status
+            status_time = scan.completed_at
+        else:
             return None
 
-        # Get open ports
-        ports_result = await session.execute(
-            select(Port)
-            .where(Port.scan_id == scan.scan_id)
-            .where(Port.state == "open")
-        )
-        ports = ports_result.scalars().all()
+        # Get open ports from latest scan
+        ports = []
+        last_scan = None
+        if scan:
+            last_scan = scan.completed_at
+            ports_result = await session.execute(
+                select(Port)
+                .where(Port.scan_id == scan.scan_id)
+                .where(Port.state == "open")
+            )
+            ports = ports_result.scalars().all()
 
         return {
             "target": target,
-            "host_status": scan.host_status,
-            "last_scan": scan.completed_at,
+            "host_status": status,
+            "last_scan": last_scan,
+            "last_host_check": status_time,
             "open_port_count": len(ports),
             "ports": [
                 {
@@ -518,3 +538,76 @@ async def get_expected_ports_status(
             "open_ports": open_expected,
             "missing_ports": missing_expected,
         }
+
+
+async def save_host_status(target: str, status: str) -> None:
+    """Save or update host status from quick check.
+
+    Args:
+        target: Target hostname.
+        status: Host status ('online', 'offline', 'dns_only').
+    """
+    async with await get_session() as session:
+        result = await session.execute(
+            select(HostStatus).where(HostStatus.target == target)
+        )
+        host_status = result.scalar_one_or_none()
+
+        now = datetime.utcnow()
+
+        if host_status:
+            host_status.status = status
+            host_status.last_check = now
+        else:
+            host_status = HostStatus(
+                target=target,
+                status=status,
+                last_check=now,
+            )
+            session.add(host_status)
+
+        await session.commit()
+
+
+async def get_last_host_status(target: str) -> Optional[str]:
+    """Get the last known host status.
+
+    Args:
+        target: Target hostname.
+
+    Returns:
+        Last known status ('online', 'offline', 'dns_only') or None if never checked.
+    """
+    async with await get_session() as session:
+        result = await session.execute(
+            select(HostStatus).where(HostStatus.target == target)
+        )
+        host_status = result.scalar_one_or_none()
+
+        if host_status:
+            return host_status.status
+        return None
+
+
+async def get_host_status_record(target: str) -> Optional[Dict]:
+    """Get full host status record.
+
+    Args:
+        target: Target hostname.
+
+    Returns:
+        Dict with status info or None if never checked.
+    """
+    async with await get_session() as session:
+        result = await session.execute(
+            select(HostStatus).where(HostStatus.target == target)
+        )
+        host_status = result.scalar_one_or_none()
+
+        if host_status:
+            return {
+                "target": host_status.target,
+                "status": host_status.status,
+                "last_check": host_status.last_check,
+            }
+        return None

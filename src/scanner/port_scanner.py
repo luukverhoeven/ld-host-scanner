@@ -557,6 +557,7 @@ async def run_host_check() -> bool:
     """Quick host online/offline check.
 
     Uses comprehensive check with TCP fallback when ICMP is blocked.
+    Persists status to database and only notifies on status changes.
 
     Returns:
         True if host is online, False otherwise.
@@ -564,26 +565,41 @@ async def run_host_check() -> bool:
     # Import here to avoid circular imports
     from src.notifications.notifier import send_host_status_notification
     from src.scanner.host_checker import quick_host_check
+    from src.storage.database import save_host_status, get_last_host_status
 
     target = settings.target_host
 
+    # Get previous status before checking
+    previous_status = await get_last_host_status(target)
+
     # Use comprehensive check with TCP fallback (ICMP often blocked by firewalls)
     result = await quick_host_check(target)
-    is_online = result["status"] == "online"
+    current_status = result["status"]
+    is_online = current_status == "online"
+
+    # Save status to database for dashboard
+    await save_host_status(target, current_status)
 
     # Update host status metric
     host_online_status.labels(target=target).set(1 if is_online else 0)
 
     logger.info(
-        "Host check for %s: %s (DNS: %s, TCP: %s)",
+        "Host check for %s: %s (DNS: %s, TCP: %s, previous: %s)",
         target,
-        result["status"],
+        current_status,
         result["dns_resolved"],
         result["tcp_reachable"],
+        previous_status or "unknown",
     )
 
-    # Send notification if host is offline
-    if not is_online:
+    # Only send notification on status CHANGE
+    if previous_status == "online" and current_status != "online":
+        # Host went offline
+        logger.warning("Host %s went OFFLINE (was online)", target)
         await send_host_status_notification(target, "offline")
+    elif previous_status and previous_status != "online" and current_status == "online":
+        # Host came back online
+        logger.info("Host %s came back ONLINE", target)
+        await send_host_status_notification(target, "online")
 
     return is_online
