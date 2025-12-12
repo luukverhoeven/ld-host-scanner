@@ -75,15 +75,26 @@ class PortScanner:
         try:
             logger.info("Starting TCP scan of %s (ports %s)", target, ports)
 
+            # Build arguments dynamically from config
             # -sS: SYN scan (fast, stealthy)
             # -sV: Version detection
-            # -T4: Aggressive timing
+            # -T{n}: Timing template (3-5)
             # --open: Only show open ports
             # --max-retries: Limit retries for faster scan
+            # --min-rate: Minimum packets per second
+            # --host-timeout: Max time per host
+            args = (
+                f"-sS -sV -T{settings.scan_timing} --open "
+                f"--max-retries {settings.scan_max_retries}"
+            )
+            if settings.scan_min_rate > 0:
+                args += f" --min-rate {settings.scan_min_rate}"
+            args += f" --host-timeout {settings.scan_host_timeout}"
+
             self.nm.scan(
                 hosts=target,
                 ports=ports,
-                arguments="-sS -sV -T4 --open --max-retries 2",
+                arguments=args,
             )
 
             return self._parse_results(target, "tcp")
@@ -112,15 +123,28 @@ class PortScanner:
         try:
             logger.info("Starting UDP scan of %s (ports %s)", target, ports)
 
+            # Build arguments dynamically from config
             # -sU: UDP scan
             # -sV: Version detection
-            # -T4: Aggressive timing
+            # -T{n}: Timing template (3-5)
             # --open: Only show open ports
-            # --max-retries: Limit retries (UDP is slow)
+            # --max-retries: Limit retries (UDP is slow, keep at 1)
+            # --min-rate: Use half of TCP rate for UDP
+            # --host-timeout: Max time per host
+            args = (
+                f"-sU -sV -T{settings.scan_timing} --open "
+                f"--max-retries 1"
+            )
+            if settings.scan_min_rate > 0:
+                # Use lower rate for UDP (it's inherently slower)
+                udp_rate = max(100, settings.scan_min_rate // 2)
+                args += f" --min-rate {udp_rate}"
+            args += f" --host-timeout {settings.scan_host_timeout}"
+
             self.nm.scan(
                 hosts=target,
                 ports=ports,
-                arguments="-sU -sV -T4 --open --max-retries 1",
+                arguments=args,
             )
 
             return self._parse_results(target, "udp")
@@ -182,6 +206,62 @@ class PortScanner:
         )
 
         return results
+
+
+async def scan_tcp_parallel(target: str, workers: int = 4) -> Dict:
+    """Scan TCP ports in parallel batches for faster scanning.
+
+    Args:
+        target: Hostname or IP address to scan.
+        workers: Number of parallel nmap processes.
+
+    Returns:
+        Dictionary with host_status and list of discovered ports.
+    """
+    total_ports = 65535
+    batch_size = total_ports // workers
+
+    async def scan_batch(start: int, end: int) -> tuple:
+        """Scan a single batch of ports."""
+        scanner = PortScanner()  # Each batch needs own scanner instance
+        result = await asyncio.to_thread(
+            scanner.scan_tcp, target, f"{start}-{end}"
+        )
+        return result["ports"], result["host_status"]
+
+    # Create batch tasks
+    tasks = []
+    for i in range(workers):
+        start = i * batch_size + 1
+        end = (i + 1) * batch_size if i < workers - 1 else total_ports
+        tasks.append(scan_batch(start, end))
+
+    logger.info(
+        "Starting parallel TCP scan of %s with %d workers",
+        target, workers
+    )
+
+    # Run all batches concurrently
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Merge results
+    all_ports = []
+    host_status = "down"
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error("Batch scan failed: %s", result)
+            continue
+        ports, status = result
+        all_ports.extend(ports)
+        if status == "up":
+            host_status = "up"
+
+    logger.info(
+        "Parallel TCP scan completed. Found %d ports across %d batches",
+        len(all_ports), workers
+    )
+
+    return {"host_status": host_status, "ports": all_ports}
 
 
 def check_expected_ports(
@@ -257,15 +337,22 @@ async def run_full_scan() -> Optional[str]:
         # Save scan as running
         await save_scan(scan_id, target, "full", started_at, "running")
 
-        # Run TCP scan (full spectrum)
-        tcp_results = await asyncio.to_thread(
-            scanner.scan_tcp, target, "1-65535"
-        )
+        # Run TCP and UDP scans concurrently for faster execution
+        # TCP uses parallel batches if workers > 1
+        if settings.scan_workers > 1:
+            tcp_task = scan_tcp_parallel(target, settings.scan_workers)
+        else:
+            tcp_task = asyncio.to_thread(
+                scanner.scan_tcp, target, "1-65535"
+            )
 
-        # Run UDP scan (top 1000 ports - UDP is slow)
-        udp_results = await asyncio.to_thread(
+        # UDP scan (top 1000 ports - UDP is inherently slow)
+        udp_task = asyncio.to_thread(
             scanner.scan_udp, target, "1-1000"
         )
+
+        # Execute both scans concurrently
+        tcp_results, udp_results = await asyncio.gather(tcp_task, udp_task)
 
         # Combine results
         all_ports = tcp_results["ports"] + udp_results["ports"]

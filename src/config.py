@@ -13,6 +13,13 @@ class Settings(BaseSettings):
     target_host: str = "example.com"
     scan_interval_hours: int = 2
 
+    # Scan performance tuning
+    scan_workers: int = 4           # Parallel nmap processes for TCP
+    scan_timing: str = "4"          # Nmap timing template (3-5)
+    scan_min_rate: int = 1000       # Min packets/second (0 to disable)
+    scan_host_timeout: str = "30m"  # Max time per host
+    scan_max_retries: int = 1       # Connection retries
+
     # Data storage
     data_dir: Path = Path("/app/data")
 
