@@ -1,0 +1,274 @@
+"""Port scanner using nmap."""
+
+import asyncio
+import logging
+import uuid
+from datetime import datetime
+from typing import Dict, List, Optional
+
+import nmap
+
+from src.config import settings
+from src.storage.database import (
+    save_scan,
+    save_ports,
+    detect_changes,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class PortScanner:
+    """Nmap-based port scanner."""
+
+    def __init__(self):
+        """Initialize the port scanner."""
+        self.nm = nmap.PortScanner()
+
+    def check_host_online(self, target: str) -> bool:
+        """Quick ping check to see if host is online.
+
+        Args:
+            target: Hostname or IP address to check.
+
+        Returns:
+            True if host responds to ping, False otherwise.
+        """
+        try:
+            # -sn: Ping scan (no port scan)
+            # -PE: ICMP echo request
+            self.nm.scan(hosts=target, arguments="-sn -PE")
+            return target in self.nm.all_hosts()
+        except nmap.PortScannerError as e:
+            logger.error("Host check failed: %s", e)
+            return False
+        except Exception as e:
+            logger.error("Unexpected error during host check: %s", e)
+            return False
+
+    def scan_tcp(
+        self,
+        target: str,
+        ports: str = "1-65535",
+    ) -> Dict:
+        """Full TCP SYN scan.
+
+        Args:
+            target: Hostname or IP address to scan.
+            ports: Port range to scan (default: all ports).
+
+        Returns:
+            Dictionary with host_status and list of discovered ports.
+        """
+        try:
+            logger.info("Starting TCP scan of %s (ports %s)", target, ports)
+
+            # -sS: SYN scan (fast, stealthy)
+            # -sV: Version detection
+            # -T4: Aggressive timing
+            # --open: Only show open ports
+            # --max-retries: Limit retries for faster scan
+            self.nm.scan(
+                hosts=target,
+                ports=ports,
+                arguments="-sS -sV -T4 --open --max-retries 2",
+            )
+
+            return self._parse_results(target, "tcp")
+
+        except nmap.PortScannerError as e:
+            logger.error("TCP scan failed: %s", e)
+            raise
+        except Exception as e:
+            logger.error("Unexpected error during TCP scan: %s", e)
+            raise
+
+    def scan_udp(
+        self,
+        target: str,
+        ports: str = "1-1000",
+    ) -> Dict:
+        """UDP scan (slower, scans top 1000 ports by default).
+
+        Args:
+            target: Hostname or IP address to scan.
+            ports: Port range to scan (default: top 1000).
+
+        Returns:
+            Dictionary with host_status and list of discovered ports.
+        """
+        try:
+            logger.info("Starting UDP scan of %s (ports %s)", target, ports)
+
+            # -sU: UDP scan
+            # -sV: Version detection
+            # -T4: Aggressive timing
+            # --open: Only show open ports
+            # --max-retries: Limit retries (UDP is slow)
+            self.nm.scan(
+                hosts=target,
+                ports=ports,
+                arguments="-sU -sV -T4 --open --max-retries 1",
+            )
+
+            return self._parse_results(target, "udp")
+
+        except nmap.PortScannerError as e:
+            logger.error("UDP scan failed: %s", e)
+            raise
+        except Exception as e:
+            logger.error("Unexpected error during UDP scan: %s", e)
+            raise
+
+    def _parse_results(self, target: str, protocol: str) -> Dict:
+        """Parse nmap scan results into structured data.
+
+        Args:
+            target: The scanned target.
+            protocol: Protocol scanned ('tcp' or 'udp').
+
+        Returns:
+            Dictionary with host_status and list of port dictionaries.
+        """
+        results = {
+            "host_status": "down",
+            "ports": [],
+        }
+
+        # Check if target was found
+        if target not in self.nm.all_hosts():
+            # Try to find by resolved IP
+            for host in self.nm.all_hosts():
+                if self.nm[host].hostname() == target:
+                    target = host
+                    break
+            else:
+                logger.warning("Target %s not found in scan results", target)
+                return results
+
+        host = self.nm[target]
+        results["host_status"] = host.state()
+
+        # Extract port information
+        if protocol in host.all_protocols():
+            for port_num in host[protocol].keys():
+                port_info = host[protocol][port_num]
+                results["ports"].append({
+                    "port": port_num,
+                    "protocol": protocol,
+                    "state": port_info.get("state", "unknown"),
+                    "service": port_info.get("name", "unknown"),
+                    "version": port_info.get("version", ""),
+                })
+
+        logger.info(
+            "Found %d %s ports on %s (host: %s)",
+            len(results["ports"]),
+            protocol.upper(),
+            target,
+            results["host_status"],
+        )
+
+        return results
+
+
+async def run_full_scan() -> Optional[str]:
+    """Execute full TCP and UDP scan.
+
+    Returns:
+        Scan ID if successful, None if failed.
+    """
+    # Import here to avoid circular imports
+    from src.notifications.notifier import send_notifications
+
+    scan_id = str(uuid.uuid4())
+    target = settings.target_host
+    started_at = datetime.utcnow()
+
+    logger.info("Starting full scan %s for %s", scan_id, target)
+
+    scanner = PortScanner()
+
+    try:
+        # Save scan as running
+        await save_scan(scan_id, target, "full", started_at, "running")
+
+        # Run TCP scan (full spectrum)
+        tcp_results = await asyncio.to_thread(
+            scanner.scan_tcp, target, "1-65535"
+        )
+
+        # Run UDP scan (top 1000 ports - UDP is slow)
+        udp_results = await asyncio.to_thread(
+            scanner.scan_udp, target, "1-1000"
+        )
+
+        # Combine results
+        all_ports = tcp_results["ports"] + udp_results["ports"]
+        host_status = tcp_results["host_status"]
+
+        # Save ports to database
+        await save_ports(scan_id, all_ports)
+
+        # Detect changes from previous scan
+        changes = await detect_changes(scan_id, target)
+
+        # Update scan status
+        await save_scan(
+            scan_id,
+            target,
+            "full",
+            started_at,
+            "completed",
+            host_status=host_status,
+            completed_at=datetime.utcnow(),
+        )
+
+        # Send notifications if any open ports or changes detected
+        if all_ports or changes:
+            await send_notifications(scan_id, target, all_ports, changes, host_status)
+
+        logger.info(
+            "Scan %s completed. Found %d open ports, %d changes",
+            scan_id,
+            len(all_ports),
+            len(changes),
+        )
+
+        return scan_id
+
+    except Exception as e:
+        logger.error("Scan %s failed: %s", scan_id, e)
+        await save_scan(
+            scan_id,
+            target,
+            "full",
+            started_at,
+            "failed",
+            error_message=str(e),
+            completed_at=datetime.utcnow(),
+        )
+        return None
+
+
+async def run_host_check() -> bool:
+    """Quick host online/offline check.
+
+    Returns:
+        True if host is online, False otherwise.
+    """
+    # Import here to avoid circular imports
+    from src.notifications.notifier import send_host_status_notification
+
+    target = settings.target_host
+    scanner = PortScanner()
+
+    is_online = await asyncio.to_thread(scanner.check_host_online, target)
+
+    logger.info("Host check for %s: %s", target, "online" if is_online else "offline")
+
+    # Send notification if host is offline
+    if not is_online:
+        await send_host_status_notification(target, "offline")
+
+    return is_online

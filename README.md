@@ -1,1 +1,209 @@
-# security-scan-external
+# Security Scanner
+
+A Docker-based network security scanner that monitors your home network for open ports and online status. Runs automated scans every 2 hours and sends alerts via email and webhooks (Discord/Slack).
+
+## Features
+
+- **Full spectrum port scanning**: TCP (1-65535) and UDP (top 1000 ports)
+- **Online/offline detection**: Quick checks every 15 minutes
+- **Automated scheduling**: Configurable scan intervals (default: 2 hours)
+- **Email notifications**: SMTP alerts with HTML reports
+- **Webhook notifications**: Discord and Slack compatible
+- **Web dashboard**: Real-time status and scan history
+- **REST API**: Programmatic access to scan data
+- **Docker deployment**: Easy setup with docker-compose
+
+## Quick Start
+
+### 1. Clone and configure
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd security-scan-external
+
+# Copy example environment file
+cp .env.example .env
+
+# Edit configuration
+nano .env
+```
+
+### 2. Configure notifications (optional)
+
+Edit `.env` to add your notification settings:
+
+```bash
+# Email (SMTP)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM=Security Scanner <your-email@gmail.com>
+SMTP_TO=alerts@example.com
+
+# Discord webhook
+WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
+
+# Or Slack webhook
+WEBHOOK_URL=https://hooks.slack.com/services/xxx/yyy/zzz
+```
+
+### 3. Build and run
+
+```bash
+# Build and start the container
+docker-compose build && docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop the container
+docker-compose down
+
+docker-compose remove
+```
+
+### 4. Access the dashboard
+
+Open your browser to: **http://localhost:8080**
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TARGET_HOST` | `example.com` | Host to scan |
+| `SCAN_INTERVAL_HOURS` | `2` | Full scan frequency |
+| `SMTP_HOST` | - | SMTP server hostname |
+| `SMTP_PORT` | `587` | SMTP server port |
+| `SMTP_USER` | - | SMTP username |
+| `SMTP_PASSWORD` | - | SMTP password |
+| `SMTP_FROM` | - | Email sender address |
+| `SMTP_TO` | - | Email recipient address |
+| `WEBHOOK_URL` | - | Discord/Slack webhook URL |
+| `TZ` | `Europe/Amsterdam` | Timezone |
+| `LOG_LEVEL` | `INFO` | Logging level |
+
+### Scan Intervals
+
+- **Full scan**: Every 2 hours (configurable via `SCAN_INTERVAL_HOURS`)
+- **Host check**: Every 15 minutes (quick online/offline check)
+- **Initial scan**: Runs immediately on container startup
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Dashboard |
+| `/history` | GET | Scan history |
+| `/health` | GET | Health check |
+| `/api/status` | GET | Current target status |
+| `/api/scans` | GET | List recent scans |
+| `/api/scans/{id}` | GET | Get scan details |
+| `/api/scans/trigger` | POST | Trigger manual scan |
+| `/api/changes` | GET | Port change history |
+| `/api/jobs` | GET | Scheduled jobs info |
+| `/docs` | GET | API documentation (Swagger) |
+
+### Manual Scan Trigger
+
+```bash
+curl -X POST http://localhost:8080/api/scans/trigger
+```
+
+### Get Current Status
+
+```bash
+curl http://localhost:8080/api/status
+```
+
+## Docker Capabilities
+
+The container requires specific Linux capabilities for nmap to function:
+
+- `NET_RAW`: TCP SYN scans, ICMP ping
+- `NET_ADMIN`: OS detection, advanced scans
+
+These are configured in `docker-compose.yml`.
+
+## Project Structure
+
+```
+security-scan-external/
+├── docker/
+│   └── Dockerfile
+├── docker-compose.yml
+├── src/
+│   ├── main.py              # Entry point
+│   ├── config.py            # Configuration
+│   ├── scanner/             # Port scanning logic
+│   ├── storage/             # Database layer
+│   ├── notifications/       # Email & webhook alerts
+│   ├── scheduler/           # Job scheduling
+│   └── web/                 # FastAPI dashboard
+├── data/                    # Persistent data (SQLite)
+├── requirements.txt
+├── .env.example
+└── README.md
+```
+
+## Notifications
+
+### Email Alerts
+
+HTML-formatted emails include:
+- Host status (online/offline)
+- List of open ports with service detection
+- Port changes (newly opened/closed)
+
+### Webhook Alerts (Discord/Slack)
+
+Rich embeds showing:
+- Host status
+- Open port count
+- Port changes with color coding (red = opened, green = closed)
+- Port details with service names
+
+## Troubleshooting
+
+### Container won't start
+
+Check logs:
+```bash
+docker-compose logs security-scanner
+```
+
+### Scans not running
+
+Verify the scheduler is running:
+```bash
+curl http://localhost:8080/api/jobs
+```
+
+### Email not sending
+
+1. Check SMTP settings in `.env`
+2. For Gmail, use an [App Password](https://support.google.com/accounts/answer/185833)
+3. Check logs for SMTP errors
+
+### Permission denied errors
+
+Ensure the container has proper capabilities:
+```yaml
+cap_add:
+  - NET_RAW
+  - NET_ADMIN
+```
+
+## Security Notes
+
+- Container runs as non-root user with limited capabilities
+- Credentials stored in environment variables (not in code)
+- SQLite database persisted in mounted volume
+- No scanning of private/internal networks by default
+
+## License
+
+MIT

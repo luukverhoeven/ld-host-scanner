@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}History - Security Scanner{% endblock %}
+
+{% block content %}
+<div class="history-page">
+    <div class="page-header">
+        <h1>Scan History</h1>
+        <p>Monitoring: <code>{{ target }}</code></p>
+    </div>
+
+    <!-- Port Changes Section -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Port Changes</h2>
+        </div>
+        <div class="card-body">
+            {% if changes %}
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Change</th>
+                            <th>Port</th>
+                            <th>Protocol</th>
+                            <th>Service</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for change in changes %}
+                        <tr class="change-{{ change.change_type }}">
+                            <td>
+                                <span class="timestamp" data-time="{{ change.detected_at }}">
+                                    {{ change.detected_at }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge badge-{{ change.change_type }}">
+                                    {{ change.change_type|upper }}
+                                </span>
+                            </td>
+                            <td><code>{{ change.port }}</code></td>
+                            <td>{{ change.protocol|upper }}</td>
+                            <td>{{ change.service or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-data">No port changes recorded</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- All Scans Section -->
+    <div class="card">
+        <div class="card-header">
+            <h2>All Scans</h2>
+        </div>
+        <div class="card-body">
+            {% if scans %}
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Scan ID</th>
+                            <th>Started</th>
+                            <th>Completed</th>
+                            <th>Status</th>
+                            <th>Host</th>
+                            <th>Open Ports</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for scan in scans %}
+                        <tr>
+                            <td><code class="scan-id">{{ scan.scan_id[:8] }}...</code></td>
+                            <td>
+                                <span class="timestamp" data-time="{{ scan.started_at }}">
+                                    {{ scan.started_at }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if scan.completed_at %}
+                                <span class="timestamp" data-time="{{ scan.completed_at }}">
+                                    {{ scan.completed_at }}
+                                </span>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge badge-{{ scan.status }}">{{ scan.status }}</span>
+                            </td>
+                            <td>
+                                <span class="badge badge-{{ scan.host_status or 'unknown' }}">
+                                    {{ (scan.host_status or 'unknown')|upper }}
+                                </span>
+                            </td>
+                            <td>{{ scan.ports|length }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-data">No scans recorded</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

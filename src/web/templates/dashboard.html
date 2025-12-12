@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Security Scanner{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="dashboard-header">
+        <h1>Network Security Dashboard</h1>
+        <p class="target-info">Monitoring: <code>{{ target }}</code></p>
+    </div>
+
+    <div class="card-grid">
+        <!-- Status Card -->
+        <div class="card status-card">
+            <div class="card-header">
+                <h2>Host Status</h2>
+            </div>
+            <div class="card-body">
+                {% if status %}
+                <div class="status-indicator {{ status.host_status or 'unknown' }}">
+                    <span class="status-dot"></span>
+                    <span class="status-text">{{ (status.host_status or 'unknown')|upper }}</span>
+                </div>
+                <div class="status-details">
+                    <p><strong>Open Ports:</strong> {{ status.open_port_count }}</p>
+                    <p><strong>Last Scan:</strong>
+                        {% if status.last_scan %}
+                        <span class="timestamp" data-time="{{ status.last_scan }}">{{ status.last_scan }}</span>
+                        {% else %}
+                        Never
+                        {% endif %}
+                    </p>
+                </div>
+                {% else %}
+                <div class="status-indicator unknown">
+                    <span class="status-dot"></span>
+                    <span class="status-text">NO DATA</span>
+                </div>
+                <p>No scan results available yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Actions Card -->
+        <div class="card actions-card">
+            <div class="card-header">
+                <h2>Actions</h2>
+            </div>
+            <div class="card-body">
+                <button class="btn btn-primary" id="trigger-scan" onclick="triggerScan()">
+                    <span class="btn-icon">&#9654;</span>
+                    Trigger Manual Scan
+                </button>
+                <p class="scan-info">
+                    Auto-scan every <strong>{{ scan_interval }}</strong> hours
+                </p>
+                <div id="scan-status" class="scan-status hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Open Ports Card -->
+    <div class="card ports-card">
+        <div class="card-header">
+            <h2>Open Ports</h2>
+        </div>
+        <div class="card-body">
+            {% if status and status.ports %}
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Port</th>
+                            <th>Protocol</th>
+                            <th>Service</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for port in status.ports %}
+                        <tr>
+                            <td><code>{{ port.port }}</code></td>
+                            <td>{{ port.protocol|upper }}</td>
+                            <td>{{ port.service or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-data">No open ports detected</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Scans Card -->
+    <div class="card scans-card">
+        <div class="card-header">
+            <h2>Recent Scans</h2>
+            <a href="/history" class="view-all">View All &rarr;</a>
+        </div>
+        <div class="card-body">
+            {% if recent_scans %}
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Status</th>
+                            <th>Host</th>
+                            <th>Ports</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for scan in recent_scans %}
+                        <tr>
+                            <td>
+                                <span class="timestamp" data-time="{{ scan.completed_at or scan.started_at }}">
+                                    {{ scan.completed_at or scan.started_at }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge badge-{{ scan.status }}">{{ scan.status }}</span>
+                            </td>
+                            <td>
+                                <span class="badge badge-{{ scan.host_status or 'unknown' }}">
+                                    {{ (scan.host_status or 'unknown')|upper }}
+                                </span>
+                            </td>
+                            <td>{{ scan.ports|length }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-data">No scans recorded yet</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
