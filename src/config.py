@@ -105,6 +105,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore unknown environment variables
 
 
 # Global settings instance
