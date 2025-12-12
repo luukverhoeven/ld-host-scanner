@@ -12,6 +12,7 @@ from src.storage.database import (
     get_scan_by_id,
     get_current_status,
     get_port_history,
+    get_port_count_history,
 )
 from src.scheduler.job_scheduler import trigger_manual_scan, get_jobs_info
 
@@ -140,3 +141,10 @@ async def get_config():
         "smtp_configured": settings.smtp_configured,
         "webhook_configured": settings.webhook_configured,
     }
+
+
+@router.get("/port-history")
+async def port_history(limit: int = 30):
+    """Get open port count history for charting."""
+    history = await get_port_count_history(settings.target_host, limit)
+    return history

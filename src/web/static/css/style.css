@@ -443,3 +443,18 @@ body {
         font-size: 0.85rem;
     }
 }
+
+/* Chart styles */
+.chart-card {
+    margin-bottom: 1.5rem;
+}
+
+.chart-card .card-body {
+    height: 300px;
+    position: relative;
+}
+
+#portHistoryChart {
+    width: 100% !important;
+    height: 100% !important;
+}

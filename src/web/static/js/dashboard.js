@@ -107,6 +107,111 @@ async function updateStatus() {
     }
 }
 
+// Port history chart instance
+let portHistoryChart = null;
+
+// Load and render port history chart
+async function loadPortHistoryChart() {
+    const canvas = document.getElementById('portHistoryChart');
+    if (!canvas) return;
+
+    try {
+        const response = await fetch('/api/port-history?limit=30');
+        const data = await response.json();
+
+        if (data.length === 0) {
+            // No data available
+            const ctx = canvas.getContext('2d');
+            ctx.font = '14px system-ui';
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('No scan history available yet', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        // Format data for Chart.js
+        const labels = data.map(item => {
+            const date = new Date(item.completed_at);
+            return date.toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        });
+        const portCounts = data.map(item => item.open_port_count);
+
+        // Destroy existing chart if any
+        if (portHistoryChart) {
+            portHistoryChart.destroy();
+        }
+
+        // Create new chart
+        portHistoryChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Open Ports',
+                    data: portCounts,
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3,
+                    pointBackgroundColor: '#3498db',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1,
+                            precision: 0
+                        },
+                        title: {
+                            display: true,
+                            text: 'Open Ports'
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Failed to load port history chart:', error);
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     formatTimestamps();
@@ -114,4 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial status update
     updateStatus();
+
+    // Load port history chart
+    loadPortHistoryChart();
 });

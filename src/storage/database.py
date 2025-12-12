@@ -611,3 +611,45 @@ async def get_host_status_record(target: str) -> Optional[Dict]:
                 "last_check": host_status.last_check,
             }
         return None
+
+
+async def get_port_count_history(target: str, limit: int = 30) -> List[Dict]:
+    """Get open port count per scan for charting.
+
+    Args:
+        target: Target hostname.
+        limit: Maximum number of data points to return.
+
+    Returns:
+        List of dicts with completed_at timestamp and open_port_count.
+    """
+    async with await get_session() as session:
+        # Get completed scans ordered by time
+        scans_result = await session.execute(
+            select(Scan)
+            .where(Scan.target == target)
+            .where(Scan.status == "completed")
+            .order_by(desc(Scan.completed_at))
+            .limit(limit)
+        )
+        scans = scans_result.scalars().all()
+
+        history = []
+        for scan in scans:
+            # Count open ports for this scan
+            ports_result = await session.execute(
+                select(Port)
+                .where(Port.scan_id == scan.scan_id)
+                .where(Port.state == "open")
+            )
+            open_ports = ports_result.scalars().all()
+
+            history.append({
+                "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+                "open_port_count": len(open_ports),
+                "host_status": scan.host_status,
+            })
+
+        # Reverse to get chronological order (oldest first)
+        history.reverse()
+        return history
