@@ -73,6 +73,9 @@ async def scan_detail(request: Request, scan_id: str):
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
 
+    # Determine if scan is still running (for SSE integration)
+    is_running = scan.get("status") == "running"
+
     # Get port changes for this scan
     changes = await get_changes_for_scan(scan_id)
 
@@ -97,6 +100,8 @@ async def scan_detail(request: Request, scan_id: str):
         {
             "request": request,
             "scan": scan,
+            "scan_id": scan_id,
+            "is_running": is_running,
             "ports": scan.get("ports", []),
             "changes": changes,
             "duration": duration,

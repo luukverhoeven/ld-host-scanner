@@ -10,6 +10,9 @@ let scanStartTime = null;
 let elapsedTimerId = null;
 let lastLogCount = 0;
 
+// Track discovered ports to avoid duplicates
+let knownDiscoveredPorts = new Set();
+
 // Phase display names
 const PHASE_NAMES = {
     'starting': 'Starting scan...',
@@ -144,6 +147,52 @@ function updateActivityLog(entries) {
     logContainer.scrollTop = logContainer.scrollHeight;
 }
 
+// Update discovered ports display
+function updateDiscoveredPorts(ports) {
+    const container = document.getElementById('discovered-ports-container');
+    const list = document.getElementById('discovered-ports-list');
+    const countSpan = document.getElementById('discovered-ports-count');
+
+    if (!container || !list || !ports) return;
+
+    // Show container when we have ports or scan is active
+    container.style.display = 'block';
+
+    // Add only new ports
+    ports.forEach(port => {
+        const portKey = `${port.port}/${port.protocol}`;
+        if (knownDiscoveredPorts.has(portKey)) return;
+        knownDiscoveredPorts.add(portKey);
+
+        const item = document.createElement('div');
+        item.className = 'discovered-port-item';
+
+        const portNum = document.createElement('code');
+        portNum.textContent = portKey;
+        item.appendChild(portNum);
+
+        if (port.common_service) {
+            const service = document.createElement('span');
+            service.className = 'port-service';
+            service.textContent = ` ${port.common_service}`;
+            item.appendChild(service);
+        } else if (port.service && port.service !== 'unknown') {
+            const service = document.createElement('span');
+            service.className = 'port-service';
+            service.textContent = ` ${port.service}`;
+            item.appendChild(service);
+        }
+
+        // Insert at top (newest first)
+        list.insertBefore(item, list.firstChild);
+    });
+
+    // Update count
+    if (countSpan) {
+        countSpan.textContent = knownDiscoveredPorts.size;
+    }
+}
+
 // Toggle activity log visibility
 function toggleActivityLog() {
     const logContainer = document.getElementById('activity-log');
@@ -168,6 +217,17 @@ function cleanupScanProgress() {
     }
     scanStartTime = null;
     lastLogCount = 0;
+    knownDiscoveredPorts.clear();
+
+    // Hide discovered ports container
+    const container = document.getElementById('discovered-ports-container');
+    if (container) {
+        container.style.display = 'none';
+    }
+    const list = document.getElementById('discovered-ports-list');
+    if (list) {
+        list.innerHTML = '';
+    }
 }
 
 // Update progress UI
@@ -211,6 +271,11 @@ function updateProgressUI(data) {
     // Update activity log (only new entries)
     if (data.activity_log) {
         updateActivityLog(data.activity_log);
+    }
+
+    // Update discovered ports list
+    if (data.discovered_ports) {
+        updateDiscoveredPorts(data.discovered_ports);
     }
 }
 
@@ -256,7 +321,7 @@ function startProgressStream(scanId) {
 }
 
 // Poll for running scan and start progress stream
-async function pollForRunningScan(maxAttempts = 10) {
+async function pollForRunningScan(maxAttempts = 15) {
     for (let i = 0; i < maxAttempts; i++) {
         try {
             const response = await fetch('/api/scans/running');
@@ -270,7 +335,9 @@ async function pollForRunningScan(maxAttempts = 10) {
         } catch (error) {
             console.error('Error polling for running scan:', error);
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Progressive backoff: 500ms, 750ms, 1000ms, 1250ms... capped at 2s
+        const delay = Math.min(500 + (i * 250), 2000);
+        await new Promise(resolve => setTimeout(resolve, delay));
     }
     return false;
 }
@@ -311,11 +378,20 @@ async function triggerScan() {
             // Poll for the running scan and start progress stream
             const found = await pollForRunningScan();
             if (!found) {
-                // Fallback: reload after timeout if no running scan found
-                statusDiv.textContent = 'Scan running, refreshing soon...';
-                setTimeout(() => {
-                    window.location.reload();
-                }, 5000);
+                // Show message but don't reload immediately - scan may still be starting
+                statusDiv.textContent = 'Scan queued. Checking for progress...';
+
+                // Set up a delayed secondary check
+                setTimeout(async () => {
+                    const secondCheck = await pollForRunningScan(5);
+                    if (!secondCheck) {
+                        // Only reload if still no scan found after secondary check
+                        statusDiv.textContent = 'Scan may have completed quickly. Refreshing...';
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1500);
+                    }
+                }, 3000);
             }
         } else {
             throw new Error(data.detail || 'Failed to trigger scan');

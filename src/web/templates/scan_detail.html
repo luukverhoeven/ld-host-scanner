@@ -29,7 +29,7 @@
                 </div>
                 <div>
                     <dt>Status</dt>
-                    <dd><span class="badge badge-{{ scan.status }}">{{ scan.status }}</span></dd>
+                    <dd><span class="badge badge-{{ scan.status }}" id="scan-status-badge">{{ scan.status }}</span></dd>
                 </div>
                 <div>
                     <dt>Host Status</dt>
@@ -41,7 +41,7 @@
                 </div>
                 <div>
                     <dt>Completed</dt>
-                    <dd>
+                    <dd id="completed-time">
                         {% if scan.completed_at %}
                         <span class="timestamp" data-time="{{ scan.completed_at }}">{{ scan.completed_at }}</span>
                         {% else %}
@@ -51,11 +51,93 @@
                 </div>
                 <div>
                     <dt>Duration</dt>
-                    <dd>{{ duration or '-' }}</dd>
+                    <dd id="scan-duration">{{ duration or '-' }}</dd>
                 </div>
             </dl>
         </div>
     </div>
+
+    {% if is_running %}
+    <!-- Live Progress Section (for running scans) -->
+    <div class="card" id="live-progress-card">
+        <div class="card-header">
+            <h2>Scan Progress</h2>
+        </div>
+        <div class="card-body">
+            <div class="scan-progress" id="scan-progress">
+                <!-- Time Display -->
+                <div class="scan-time-info">
+                    <span class="elapsed-time">
+                        <strong>Elapsed:</strong> <span id="elapsed-time">00:00</span>
+                    </span>
+                    <span class="eta-time">
+                        <strong>ETA:</strong> <span id="eta-time">Calculating...</span>
+                    </span>
+                </div>
+
+                <!-- TCP/UDP Status Grid -->
+                <div class="scan-type-status">
+                    <div class="scan-type tcp-scan">
+                        <span class="scan-type-icon" id="tcp-icon">&#9675;</span>
+                        <span class="scan-type-label">TCP</span>
+                        <span class="scan-type-progress" id="tcp-status">Waiting...</span>
+                        <span class="scan-type-count" id="tcp-count">0 ports</span>
+                    </div>
+                    <div class="scan-type udp-scan">
+                        <span class="scan-type-icon" id="udp-icon">&#9675;</span>
+                        <span class="scan-type-label">UDP</span>
+                        <span class="scan-type-progress" id="udp-status">Waiting...</span>
+                        <span class="scan-type-count" id="udp-count">0 ports</span>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="progress-phase">Starting scan...</span>
+                </div>
+
+                <!-- Activity Log -->
+                <div class="activity-log-container">
+                    <div class="activity-log-header">
+                        <span>Activity Log</span>
+                        <button class="btn-toggle-log" id="toggle-log" onclick="toggleActivityLog()">&#9660;</button>
+                    </div>
+                    <div class="activity-log" id="activity-log">
+                        <!-- Log entries will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Discovered Ports (for running scans) -->
+    <div class="card" id="live-ports-card">
+        <div class="card-header">
+            <h2>Discovered Ports (<span id="live-port-count">0</span>)</h2>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="data-table" id="live-ports-table">
+                    <thead>
+                        <tr>
+                            <th>Port</th>
+                            <th>Protocol</th>
+                            <th>Service</th>
+                            <th>Discovered At</th>
+                        </tr>
+                    </thead>
+                    <tbody id="live-ports-tbody">
+                        <!-- Ports will be added here dynamically -->
+                    </tbody>
+                </table>
+            </div>
+            <p class="no-data" id="no-live-ports">Scanning in progress...</p>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Port Changes (if any) -->
     {% if changes %}
@@ -90,8 +172,8 @@
     </div>
     {% endif %}
 
-    <!-- All Open Ports -->
-    <div class="card">
+    <!-- All Open Ports (hidden when running, shown when complete) -->
+    <div class="card" id="final-ports-card" {% if is_running %}style="display: none;"{% endif %}>
         <div class="card-header">
             <h2>Open Ports ({{ ports|length }})</h2>
         </div>
@@ -148,4 +230,322 @@
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if is_running %}
+<script>
+(function() {
+    // Scan detail page SSE integration
+    const scanId = "{{ scan_id }}";
+    const knownPortIds = new Set();
+    let scanStartTime = null;
+    let elapsedTimerId = null;
+    let lastLogCount = 0;
+
+    // Phase display names
+    const PHASE_NAMES = {
+        'starting': 'Starting scan...',
+        'scanning': 'Scanning ports...',
+        'enriching': 'Detecting services...',
+        'saving': 'Saving results...',
+        'completed': 'Scan complete!'
+    };
+
+    // Status icons for TCP/UDP indicators
+    const STATUS_ICONS = {
+        'not_started': '&#9675;',
+        'in_progress': '&#9684;',
+        'completed': '&#9679;'
+    };
+
+    // Status text mapping
+    const STATUS_TEXT = {
+        'not_started': 'Waiting...',
+        'in_progress': 'Scanning...',
+        'completed': 'Done'
+    };
+
+    // Update elapsed time display
+    function updateElapsedTime() {
+        if (!scanStartTime) return;
+
+        const elapsed = Date.now() - scanStartTime;
+        const minutes = Math.floor(elapsed / 60000);
+        const seconds = Math.floor((elapsed % 60000) / 1000);
+
+        const elapsedEl = document.getElementById('elapsed-time');
+        if (elapsedEl) {
+            elapsedEl.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+
+        updateETA(elapsed);
+    }
+
+    // Calculate and display ETA
+    function updateETA(elapsedMs) {
+        const progressFill = document.getElementById('progress-fill');
+        const etaEl = document.getElementById('eta-time');
+        if (!progressFill || !etaEl) return;
+
+        const progressWidth = parseFloat(progressFill.style.width) || 0;
+
+        if (progressWidth > 10 && progressWidth < 100) {
+            const estimatedTotal = (elapsedMs / progressWidth) * 100;
+            const remaining = Math.max(0, estimatedTotal - elapsedMs);
+
+            const minutes = Math.floor(remaining / 60000);
+            const seconds = Math.floor((remaining % 60000) / 1000);
+
+            etaEl.textContent = `~${minutes}m ${seconds}s`;
+        } else if (progressWidth >= 100) {
+            etaEl.textContent = 'Complete';
+        } else {
+            etaEl.textContent = 'Calculating...';
+        }
+    }
+
+    // Update TCP/UDP status indicators
+    function updateScanTypeStatus(data) {
+        const tcpIcon = document.getElementById('tcp-icon');
+        const tcpStatus = document.getElementById('tcp-status');
+        const tcpCount = document.getElementById('tcp-count');
+
+        if (tcpIcon) {
+            tcpIcon.innerHTML = STATUS_ICONS[data.tcp_status] || STATUS_ICONS['not_started'];
+            tcpIcon.className = `scan-type-icon ${data.tcp_status || 'not_started'}`;
+        }
+        if (tcpStatus) {
+            tcpStatus.textContent = STATUS_TEXT[data.tcp_status] || STATUS_TEXT['not_started'];
+        }
+        if (tcpCount) {
+            tcpCount.textContent = `${data.tcp_ports_found || 0} ports`;
+        }
+
+        const udpIcon = document.getElementById('udp-icon');
+        const udpStatus = document.getElementById('udp-status');
+        const udpCount = document.getElementById('udp-count');
+
+        if (udpIcon) {
+            udpIcon.innerHTML = STATUS_ICONS[data.udp_status] || STATUS_ICONS['not_started'];
+            udpIcon.className = `scan-type-icon ${data.udp_status || 'not_started'}`;
+        }
+        if (udpStatus) {
+            udpStatus.textContent = STATUS_TEXT[data.udp_status] || STATUS_TEXT['not_started'];
+        }
+        if (udpCount) {
+            udpCount.textContent = `${data.udp_ports_found || 0} ports`;
+        }
+    }
+
+    // Update activity log with new entries
+    function updateActivityLog(entries) {
+        const logContainer = document.getElementById('activity-log');
+        if (!logContainer || !entries || !Array.isArray(entries)) return;
+
+        const newEntries = entries.slice(lastLogCount);
+        lastLogCount = entries.length;
+
+        newEntries.forEach(entry => {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${entry.type || 'info'}`;
+
+            const timestamp = document.createElement('span');
+            timestamp.className = 'log-timestamp';
+            try {
+                const time = new Date(entry.ts);
+                timestamp.textContent = time.toLocaleTimeString();
+            } catch (e) {
+                timestamp.textContent = entry.ts || '';
+            }
+
+            const message = document.createElement('span');
+            message.className = 'log-message';
+            message.textContent = entry.msg || '';
+
+            logEntry.appendChild(timestamp);
+            logEntry.appendChild(message);
+            logContainer.appendChild(logEntry);
+        });
+
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    // Update progress UI
+    function updateProgressUI(data) {
+        const phaseSpan = document.getElementById('progress-phase');
+        const progressFill = document.getElementById('progress-fill');
+
+        if (data.started_at && !scanStartTime) {
+            scanStartTime = new Date(data.started_at).getTime();
+            elapsedTimerId = setInterval(updateElapsedTime, 1000);
+            updateElapsedTime();
+        }
+
+        if (phaseSpan) {
+            phaseSpan.textContent = PHASE_NAMES[data.current_phase] || data.current_phase;
+        }
+
+        const phaseProgress = {
+            'starting': 10,
+            'scanning': 40,
+            'enriching': 60,
+            'saving': 80,
+            'completed': 100
+        };
+        if (progressFill) {
+            progressFill.style.width = (phaseProgress[data.current_phase] || 0) + '%';
+        }
+
+        updateScanTypeStatus(data);
+
+        if (data.activity_log) {
+            updateActivityLog(data.activity_log);
+        }
+    }
+
+    // Update discovered ports table
+    function updateLivePortsTable(ports) {
+        const tbody = document.getElementById('live-ports-tbody');
+        const noPortsMsg = document.getElementById('no-live-ports');
+        const countSpan = document.getElementById('live-port-count');
+
+        if (!tbody || !ports) return;
+
+        ports.forEach(port => {
+            const portKey = `${port.port}-${port.protocol}`;
+            if (knownPortIds.has(portKey)) return;
+            knownPortIds.add(portKey);
+
+            const row = document.createElement('tr');
+            row.id = `live-port-${portKey}`;
+
+            // Port number
+            const portCell = document.createElement('td');
+            const portCode = document.createElement('code');
+            portCode.textContent = port.port;
+            portCell.appendChild(portCode);
+            row.appendChild(portCell);
+
+            // Protocol
+            const protoCell = document.createElement('td');
+            protoCell.textContent = (port.protocol || '').toUpperCase();
+            row.appendChild(protoCell);
+
+            // Service
+            const serviceCell = document.createElement('td');
+            if (port.service && port.service !== 'unknown') {
+                serviceCell.textContent = port.service;
+            } else if (port.common_service) {
+                const unknown = document.createElement('span');
+                unknown.className = 'unknown-service';
+                unknown.textContent = 'unknown';
+                serviceCell.appendChild(unknown);
+                serviceCell.appendChild(document.createTextNode(' '));
+                const common = document.createElement('span');
+                common.className = 'common-service';
+                common.textContent = `(${port.common_service})`;
+                serviceCell.appendChild(common);
+            } else {
+                const unknown = document.createElement('span');
+                unknown.className = 'unknown-service';
+                unknown.textContent = 'unknown';
+                serviceCell.appendChild(unknown);
+            }
+            row.appendChild(serviceCell);
+
+            // Discovered time
+            const timeCell = document.createElement('td');
+            if (port.discovered_at) {
+                try {
+                    const time = new Date(port.discovered_at);
+                    timeCell.textContent = time.toLocaleTimeString();
+                } catch (e) {
+                    timeCell.textContent = '-';
+                }
+            } else {
+                timeCell.textContent = 'just now';
+            }
+            row.appendChild(timeCell);
+
+            // Insert at top (newest first)
+            tbody.insertBefore(row, tbody.firstChild);
+        });
+
+        if (countSpan) {
+            countSpan.textContent = knownPortIds.size;
+        }
+        if (noPortsMsg) {
+            noPortsMsg.style.display = knownPortIds.size > 0 ? 'none' : 'block';
+        }
+    }
+
+    // Toggle activity log visibility
+    window.toggleActivityLog = function() {
+        const logContainer = document.getElementById('activity-log');
+        const toggleBtn = document.getElementById('toggle-log');
+
+        if (!logContainer || !toggleBtn) return;
+
+        if (logContainer.classList.contains('collapsed')) {
+            logContainer.classList.remove('collapsed');
+            toggleBtn.innerHTML = '&#9660;';
+        } else {
+            logContainer.classList.add('collapsed');
+            toggleBtn.innerHTML = '&#9654;';
+        }
+    };
+
+    // Start SSE connection
+    function startDetailProgressStream() {
+        const eventSource = new EventSource(`/api/scans/${scanId}/progress`);
+
+        eventSource.addEventListener('progress', (e) => {
+            const data = JSON.parse(e.data);
+            updateProgressUI(data);
+            updateLivePortsTable(data.discovered_ports || []);
+        });
+
+        eventSource.addEventListener('complete', (e) => {
+            const data = JSON.parse(e.data);
+            updateProgressUI(data);
+
+            if (elapsedTimerId) {
+                clearInterval(elapsedTimerId);
+            }
+            eventSource.close();
+
+            // Update status badge
+            const statusBadge = document.getElementById('scan-status-badge');
+            if (statusBadge) {
+                statusBadge.textContent = 'completed';
+                statusBadge.className = 'badge badge-completed';
+            }
+
+            // Reload page to show final results
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
+        });
+
+        eventSource.addEventListener('error', (e) => {
+            if (elapsedTimerId) {
+                clearInterval(elapsedTimerId);
+            }
+            eventSource.close();
+
+            // Check if scan actually completed
+            setTimeout(() => {
+                window.location.reload();
+            }, 2000);
+        });
+    }
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        startDetailProgressStream();
+    });
+})();
+</script>
+{% endif %}
 {% endblock %}
