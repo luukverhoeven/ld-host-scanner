@@ -56,7 +56,9 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Run the application."""
-    logger.info("Starting LD Host Scanner")
+    from src.version import __version__
+
+    logger.info("Starting LD Host Scanner v%s", __version__)
     logger.info("Target: %s", settings.target_host)
     logger.info("Scan interval: %d hours", settings.scan_interval_hours)
     logger.info("SMTP configured: %s", settings.smtp_configured)

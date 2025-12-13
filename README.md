@@ -71,6 +71,17 @@ docker-compose logs -f
 docker-compose down
 ```
 
+#### Build with version info (optional)
+
+```bash
+# Build with version metadata
+docker build -f docker/Dockerfile \
+  --build-arg VERSION=1.1.0 \
+  --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+  --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
+  -t ld-host-scanner:1.1.0 .
+```
+
 ### 4. Access the dashboard
 
 Open your browser to: **http://localhost:8080**
@@ -83,6 +94,7 @@ Open your browser to: **http://localhost:8080**
 |----------|---------|-------------|
 | `TARGET_HOST` | `example.com` | Host to scan (must be configured) |
 | `SCAN_INTERVAL_HOURS` | `2` | Full scan frequency |
+| `HOST_CHECK_INTERVAL_MINUTES` | `15` | Host online check frequency |
 | `SMTP_HOST` | - | SMTP server hostname |
 | `SMTP_PORT` | `587` | SMTP server port |
 | `SMTP_USER` | - | SMTP username |
@@ -153,14 +165,28 @@ The scanner will send a WireGuard handshake probe. If WireGuard responds (even w
 |----------|--------|-------------|
 | `/` | GET | Dashboard |
 | `/history` | GET | Scan history |
-| `/health` | GET | Health check |
+| `/health` | GET | Health check (includes version) |
+| `/version` | GET | Version information |
 | `/api/status` | GET | Current target status |
 | `/api/scans` | GET | List recent scans |
 | `/api/scans/{id}` | GET | Get scan details |
 | `/api/scans/trigger` | POST | Trigger manual scan |
 | `/api/changes` | GET | Port change history |
 | `/api/jobs` | GET | Scheduled jobs info |
+| `/api/host-status-history` | GET | Host uptime history (for chart) |
+| `/api/port-history` | GET | Open port count history (for chart) |
 | `/docs` | GET | API documentation (Swagger) |
+
+### Check Version
+
+```bash
+curl http://localhost:8080/version
+# {"version":"1.1.0","build_date":null,"git_commit":null}
+
+# Or via health endpoint
+curl http://localhost:8080/health
+# {"status":"healthy","scheduler_running":true,"version":"1.1.0","message":"OK"}
+```
 
 ### Manual Scan Trigger
 

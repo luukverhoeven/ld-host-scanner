@@ -23,9 +23,16 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 # =============================================================================
 FROM python:3.12-alpine
 
+# Build arguments for version info
+ARG VERSION=1.1.0
+ARG BUILD_DATE
+ARG GIT_COMMIT
+
 LABEL maintainer="LdesignMedia"
 LABEL description="Home Network Security Scanner"
-LABEL version="1.0.0"
+LABEL version="${VERSION}"
+LABEL build_date="${BUILD_DATE}"
+LABEL git_commit="${GIT_COMMIT}"
 
 # Install runtime dependencies
 # - nmap: Port scanning (used for UDP)
@@ -84,7 +91,10 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TARGET_HOST=example.com \
     SCAN_INTERVAL_HOURS=2 \
-    LOG_LEVEL=INFO
+    LOG_LEVEL=INFO \
+    APP_VERSION=${VERSION} \
+    APP_BUILD_DATE=${BUILD_DATE} \
+    APP_GIT_COMMIT=${GIT_COMMIT}
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080"]
