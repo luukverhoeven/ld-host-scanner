@@ -77,11 +77,12 @@ class Settings(BaseSettings):
     def wireguard_probe_ports_list(self) -> List[int]:
         """Parse WireGuard probe ports into list of integers.
 
-        If not configured, defaults to common WireGuard ports (448, 51820).
+        Returns empty list if not configured - ports must be explicitly set via
+        WIREGUARD_PROBE_PORTS environment variable (e.g., "448,51820").
         """
         if self.wireguard_probe_ports:
             return [int(p.strip()) for p in self.wireguard_probe_ports.split(",") if p.strip()]
-        return [448, 51820]
+        return []
 
     @property
     def wireguard_configured(self) -> bool:

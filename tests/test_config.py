@@ -1,6 +1,10 @@
 """Tests for configuration parsing."""
 
+from datetime import datetime, timezone
+
 import pytest
+
+from src import config as config_module
 from src.config import Settings
 
 
@@ -102,11 +106,47 @@ class TestWireGuardProbePorts:
     """Tests for WireGuard probe ports parsing."""
 
     def test_wireguard_probe_ports_default(self):
-        """Defaults to promote common WireGuard ports."""
+        """Returns empty list when not configured - ports must be explicitly set."""
         settings = Settings(wireguard_probe_ports=None)
-        assert settings.wireguard_probe_ports_list == [448, 51820]
+        assert settings.wireguard_probe_ports_list == []
 
     def test_wireguard_probe_ports_parsing(self):
         """Parses configured ports list."""
         settings = Settings(wireguard_probe_ports="51820, 12345")
         assert settings.wireguard_probe_ports_list == [51820, 12345]
+
+
+class TestTargetHostValidation:
+    """Tests for TARGET_HOST validation rules."""
+
+    def test_rejects_shell_metacharacters(self):
+        settings = Settings(target_host="example.com")
+        assert settings.target_host == "example.com"
+
+        with pytest.raises(ValueError):
+            Settings(target_host="example.com;rm -rf /")
+
+    def test_allows_ipv4(self):
+        settings = Settings(target_host="192.168.1.10")
+        assert settings.target_host == "192.168.1.10"
+
+
+class TestTimezoneAndLocalIso:
+    """Tests for timezone handling utilities."""
+
+    def test_tz_falls_back_to_utc(self):
+        settings = Settings(display_timezone="Not/AZone", wireguard_probe_ports=None)
+        assert str(settings.tz) in {"UTC", "UTC+00:00"}
+
+    def test_to_local_iso_handles_none_and_naive(self, monkeypatch):
+        monkeypatch.setattr(config_module, "settings", Settings(display_timezone="UTC", wireguard_probe_ports=None))
+
+        assert config_module.to_local_iso(None) is None
+
+        naive = datetime(2025, 1, 1, 0, 0, 0)
+        iso = config_module.to_local_iso(naive)
+        assert iso.startswith("2025-01-01T00:00:00")
+
+        aware = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        iso2 = config_module.to_local_iso(aware)
+        assert iso2.startswith("2025-01-01T00:00:00")

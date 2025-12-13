@@ -101,7 +101,7 @@ Open your browser to: **http://localhost:8080**
 | `UDP_VERSION_DETECTION_PORTS_LIMIT` | `50` | Max UDP ports to version-scan per run |
 | `EXPECTED_PORTS` | - | Ports that should be open (e.g., `80/tcp,443/tcp,448/udp`) |
 | `WIREGUARD_PUBLIC_KEY` | - | WireGuard server public key (base64) for probe verification. **Quote the value** as it contains `=` |
-| `WIREGUARD_PROBE_PORTS` | - | Ports to probe for WireGuard (default: 448, 51820) |
+| `WIREGUARD_PROBE_PORTS` | - | Ports to probe for WireGuard (e.g., `448,51820`) - must be explicitly set |
 
 ### Scan Intervals
 
