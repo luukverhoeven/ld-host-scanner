@@ -76,12 +76,40 @@ async def check_host_tcp_connect(
         return False
 
 
+async def check_host_ping(target: str, timeout: float = 2.0) -> bool:
+    """Check if host is reachable via ICMP ping.
+
+    Uses icmplib with unprivileged mode (UDP-based) which doesn't require root.
+
+    Args:
+        target: Hostname or IP address.
+        timeout: Ping timeout in seconds.
+
+    Returns:
+        True if host responds to ping, False otherwise.
+    """
+    try:
+        from icmplib import async_ping
+
+        result = await async_ping(target, count=1, timeout=timeout, privileged=False)
+        if result.is_alive:
+            logger.debug("Ping to %s successful (%.1fms)", target, result.avg_rtt)
+            return True
+        else:
+            logger.debug("Ping to %s failed (no response)", target)
+            return False
+    except Exception as e:
+        logger.debug("Ping to %s failed: %s", target, e)
+        return False
+
+
 async def quick_host_check(target: Optional[str] = None) -> dict:
     """Perform quick host status check.
 
     Tries multiple methods to determine if host is reachable:
     1. DNS resolution
-    2. TCP connect to ports discovered in last scan (or fallback to common ports)
+    2. ICMP ping (fast, tried first)
+    3. TCP connect fallback (for hosts that block ICMP)
 
     Args:
         target: Hostname or IP to check. Defaults to configured target.
@@ -99,6 +127,7 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
         "target": target,
         "dns_resolved": False,
         "ip_address": None,
+        "ping_reachable": False,
         "tcp_reachable": False,
         "status": "unknown",
     }
@@ -109,43 +138,48 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
         result["dns_resolved"] = True
         result["ip_address"] = ip
 
-    # Get ports from last successful scan, fallback to common ports
-    discovered_ports = await get_open_ports_from_last_scan(target)
-    common_ports = [443, 80, 22, 8080]
+    # Try ICMP ping first (fastest method)
+    if await check_host_ping(target):
+        result["ping_reachable"] = True
+    else:
+        # Ping failed, fall back to TCP connect check
+        # Get ports from last successful scan, fallback to common ports
+        discovered_ports = await get_open_ports_from_last_scan(target)
+        common_ports = [443, 80, 22, 8080]
 
-    # Prioritize discovered ports, then add common ports as fallback
-    # Use set to avoid duplicates, limit to 8 ports for speed
-    ports_to_check: List[int] = []
-    for port in discovered_ports[:5]:
-        if port not in ports_to_check:
-            ports_to_check.append(port)
-    for port in common_ports:
-        if port not in ports_to_check and len(ports_to_check) < 8:
-            ports_to_check.append(port)
+        # Prioritize discovered ports, then add common ports as fallback
+        # Use set to avoid duplicates, limit to 8 ports for speed
+        ports_to_check: List[int] = []
+        for port in discovered_ports[:5]:
+            if port not in ports_to_check:
+                ports_to_check.append(port)
+        for port in common_ports:
+            if port not in ports_to_check and len(ports_to_check) < 8:
+                ports_to_check.append(port)
 
-    logger.debug("Quick check ports for %s: %s", target, ports_to_check)
+        logger.debug("Ping failed, trying TCP on ports: %s", ports_to_check)
 
-    # Try TCP connect to ports
-    for port in ports_to_check:
-        if await check_host_tcp_connect(target, port):
-            result["tcp_reachable"] = True
-            break
+        # Try TCP connect to ports
+        for port in ports_to_check:
+            if await check_host_tcp_connect(target, port):
+                result["tcp_reachable"] = True
+                break
 
     # Determine overall status
-    if result["tcp_reachable"]:
+    if result["ping_reachable"] or result["tcp_reachable"]:
         result["status"] = "online"
     elif result["dns_resolved"]:
-        result["status"] = "dns_only"  # DNS works but no TCP response
+        result["status"] = "dns_only"  # DNS works but no ping/TCP response
     else:
         result["status"] = "offline"
 
     logger.info(
-        "Quick check for %s: %s (DNS: %s, TCP: %s, ports: %s)",
+        "Quick check for %s: %s (DNS: %s, Ping: %s, TCP: %s)",
         target,
         result["status"],
         result["dns_resolved"],
+        result["ping_reachable"],
         result["tcp_reachable"],
-        ports_to_check[:3],  # Log first 3 ports checked
     )
 
     return result

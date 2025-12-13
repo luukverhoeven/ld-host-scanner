@@ -1,5 +1,6 @@
 # Core dependencies
 python-nmap>=0.7.1
+icmplib>=3.0.0
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 
