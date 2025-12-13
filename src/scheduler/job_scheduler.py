@@ -83,15 +83,18 @@ def start_scheduler() -> None:
         settings.scan_interval_hours,
     )
 
-    # Quick host check - every 15 minutes
+    # Quick host check - configurable interval
     scheduler.add_job(
         run_host_check,
-        trigger=IntervalTrigger(minutes=15),
+        trigger=IntervalTrigger(minutes=settings.host_check_interval_minutes),
         id="host_check",
         name="Host Online Check",
         replace_existing=True,
     )
-    logger.info("Scheduled host check every 15 minutes")
+    logger.info(
+        "Scheduled host check every %d minutes",
+        settings.host_check_interval_minutes,
+    )
 
     # Run initial scan shortly after startup (30 seconds delay)
     scheduler.add_job(

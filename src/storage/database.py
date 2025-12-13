@@ -10,7 +10,7 @@ from sqlalchemy import desc, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from src.config import settings, to_local_iso
-from src.storage.models import Base, Scan, Port, PortChange, Notification, HostStatus
+from src.storage.models import Base, Scan, Port, PortChange, Notification, HostStatus, HostStatusHistory
 
 logger = logging.getLogger(__name__)
 
@@ -949,3 +949,70 @@ async def get_open_ports_from_last_scan(target: str) -> List[int]:
         ports = ports_result.scalars().all()
 
         return [p.port for p in ports]
+
+
+async def save_host_status_history(
+    target: str,
+    status: str,
+    dns_resolved: Optional[bool] = None,
+    tcp_reachable: Optional[bool] = None,
+    icmp_reachable: Optional[bool] = None,
+    check_method: Optional[str] = None,
+) -> None:
+    """Save a historical record of a host status check.
+
+    Args:
+        target: Target hostname.
+        status: Host status ('online', 'offline', 'dns_only').
+        dns_resolved: Whether DNS resolution succeeded.
+        tcp_reachable: Whether TCP probe succeeded.
+        icmp_reachable: Whether ICMP ping succeeded.
+        check_method: Method that confirmed status ('icmp', 'tcp', 'dns').
+    """
+    async with await get_session() as session:
+        history_record = HostStatusHistory(
+            target=target,
+            status=status,
+            dns_resolved=dns_resolved,
+            tcp_reachable=tcp_reachable,
+            icmp_reachable=icmp_reachable,
+            check_method=check_method,
+            checked_at=datetime.utcnow(),
+        )
+        session.add(history_record)
+        await session.commit()
+
+
+async def get_host_status_history(target: str, limit: int = 30) -> List[Dict]:
+    """Get host status history for charting.
+
+    Args:
+        target: Target hostname.
+        limit: Maximum number of data points to return.
+
+    Returns:
+        List of dicts with checked_at timestamp and status (chronological order, oldest first).
+    """
+    async with await get_session() as session:
+        result = await session.execute(
+            select(HostStatusHistory)
+            .where(HostStatusHistory.target == target)
+            .order_by(desc(HostStatusHistory.checked_at))
+            .limit(limit)
+        )
+        records = result.scalars().all()
+
+        history = [
+            {
+                "checked_at": to_local_iso(record.checked_at),
+                "status": record.status,
+                "dns_resolved": record.dns_resolved,
+                "tcp_reachable": record.tcp_reachable,
+                "check_method": record.check_method,
+            }
+            for record in records
+        ]
+
+        # Reverse to get chronological order (oldest first for chart)
+        history.reverse()
+        return history

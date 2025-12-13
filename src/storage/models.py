@@ -127,3 +127,22 @@ class HostStatus(Base):
     failure_count = Column(Integer, nullable=False, default=0)  # Consecutive failures
     last_check = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class HostStatusHistory(Base):
+    """Historical record of host status checks for uptime tracking."""
+
+    __tablename__ = "host_status_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    target = Column(String(255), nullable=False, index=True)
+    status = Column(String(20), nullable=False)  # 'online', 'offline', 'dns_only'
+    dns_resolved = Column(Boolean, nullable=True)  # DNS lookup result
+    tcp_reachable = Column(Boolean, nullable=True)  # TCP probe result
+    icmp_reachable = Column(Boolean, nullable=True)  # ICMP ping result
+    check_method = Column(String(20), nullable=True)  # 'icmp', 'tcp', 'dns'
+    checked_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_host_history_target_time", "target", "checked_at"),
+    )

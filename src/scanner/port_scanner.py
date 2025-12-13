@@ -1037,7 +1037,7 @@ async def run_host_check() -> bool:
     # Import here to avoid circular imports
     from src.notifications.notifier import send_host_status_notification
     from src.scanner.host_checker import quick_host_check
-    from src.storage.database import save_host_status, get_last_host_status
+    from src.storage.database import save_host_status, get_last_host_status, save_host_status_history
 
     target = settings.target_host
 
@@ -1051,6 +1051,16 @@ async def run_host_check() -> bool:
 
     # Save status to database for dashboard (returns failure count)
     failure_count = await save_host_status(target, current_status)
+
+    # Save historical record for uptime tracking
+    await save_host_status_history(
+        target=target,
+        status=current_status,
+        dns_resolved=result.get("dns_resolved"),
+        tcp_reachable=result.get("tcp_reachable"),
+        icmp_reachable=result.get("icmp_reachable"),
+        check_method=result.get("method"),
+    )
 
     # Update host status metric
     host_online_status.labels(target=target).set(1 if is_online else 0)

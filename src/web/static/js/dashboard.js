@@ -578,6 +578,9 @@ async function updateStatus() {
 // Port history chart instance
 let portHistoryChart = null;
 
+// Host uptime chart instance
+let hostUptimeChart = null;
+
 // Load and render port history chart
 async function loadPortHistoryChart() {
     const canvas = document.getElementById('portHistoryChart');
@@ -682,6 +685,139 @@ async function loadPortHistoryChart() {
     }
 }
 
+// Load and render host uptime chart
+async function loadHostUptimeChart() {
+    const canvas = document.getElementById('hostUptimeChart');
+    if (!canvas) return;
+
+    try {
+        // Fetch 48 data points (~12 hours at 15-minute intervals)
+        const response = await fetch('/api/host-status-history?limit=48');
+        const data = await response.json();
+
+        if (data.length === 0) {
+            const ctx = canvas.getContext('2d');
+            ctx.font = '14px system-ui';
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('No host status history available yet', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        // Format data for Chart.js
+        const serverTimezone = getServerTimezone();
+        const labels = data.map(item => {
+            const date = new Date(item.checked_at);
+            return date.toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: serverTimezone,
+            });
+        });
+
+        // Convert status to numeric: online=1, dns_only=0.5, offline=0
+        const statusValues = data.map(item => {
+            if (item.status === 'online') return 1;
+            if (item.status === 'dns_only') return 0.5;
+            return 0;
+        });
+
+        // Color based on status
+        const pointColors = data.map(item => {
+            if (item.status === 'online') return '#27ae60';  // success green
+            if (item.status === 'dns_only') return '#f39c12';  // warning orange
+            return '#e74c3c';  // danger red
+        });
+
+        // Destroy existing chart if any
+        if (hostUptimeChart) {
+            hostUptimeChart.destroy();
+        }
+
+        // Create step chart for uptime status
+        hostUptimeChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Host Status',
+                    data: statusValues,
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    stepped: 'before',  // Step chart for status changes
+                    pointBackgroundColor: pointColors,
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                const item = data[context.dataIndex];
+                                let label = item.status.toUpperCase();
+                                if (item.check_method) {
+                                    label += ` (via ${item.check_method})`;
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
+                    },
+                    y: {
+                        min: 0,
+                        max: 1,
+                        ticks: {
+                            stepSize: 0.5,
+                            callback: function(value) {
+                                if (value === 1) return 'Online';
+                                if (value === 0.5) return 'DNS Only';
+                                if (value === 0) return 'Offline';
+                                return '';
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Status'
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Failed to load host uptime chart:', error);
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     formatTimestamps();
@@ -690,6 +826,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial status update
     updateStatus();
 
-    // Load port history chart
+    // Load charts
     loadPortHistoryChart();
+    loadHostUptimeChart();
 });

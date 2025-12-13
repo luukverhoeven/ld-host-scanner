@@ -16,6 +16,7 @@ from src.storage.database import (
     get_current_status,
     get_port_history,
     get_port_count_history,
+    get_host_status_history,
     update_port_service,
     get_scan_progress,
 )
@@ -223,6 +224,17 @@ async def get_config():
 async def port_history(limit: int = Query(30, ge=1, le=365)):
     """Get open port count history for charting."""
     history = await get_port_count_history(settings.target_host, limit)
+    return history
+
+
+@router.get("/host-status-history")
+async def host_status_history(limit: int = Query(48, ge=1, le=365)):
+    """Get host status history for charting uptime.
+
+    Returns chronological list of status checks for timeline visualization.
+    Default limit of 48 covers ~12 hours at 15-minute intervals.
+    """
+    history = await get_host_status_history(settings.target_host, limit)
     return history
 
 

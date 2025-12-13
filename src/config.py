@@ -123,6 +123,7 @@ class Settings(BaseSettings):
 
     # Host status monitoring
     host_offline_threshold: int = 2  # Consecutive failures before offline alert
+    host_check_interval_minutes: int = 15  # Interval between host checks
 
     # Timezone for display (reads from TZ env var, defaults to UTC)
     display_timezone: str = os.getenv("TZ", "UTC")
