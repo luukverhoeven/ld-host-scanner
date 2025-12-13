@@ -27,6 +27,7 @@ class TestParseRustscanOutput:
             "state": "open",
             "service": "unknown",
             "version": "",
+            "common_service": "http",
         }
         assert result["ports"][1]["port"] == 443
         assert result["ports"][2]["port"] == 8080

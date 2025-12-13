@@ -39,6 +39,26 @@ class PortScanner:
         """Initialize the port scanner."""
         self.nm = nmap.PortScanner()
 
+    @staticmethod
+    def _version_detection_args(intensity: str) -> str:
+        """Build nmap version detection args for a given intensity."""
+        if intensity == "light":
+            return "-sV --version-light"
+        if intensity == "thorough":
+            return "-sV --version-all"
+        return "-sV"
+
+    def _find_nmap_target_key(self, target: str) -> Optional[str]:
+        """Resolve the target key used in python-nmap results."""
+        if target in self.nm.all_hosts():
+            return target
+
+        for host in self.nm.all_hosts():
+            if self.nm[host].hostname() == target:
+                return host
+
+        return None
+
     def scan_tcp_rustscan(self, target: str, ports: str = "1-65535") -> Dict:
         """TCP scan using Rustscan for speed.
 
@@ -192,6 +212,7 @@ class PortScanner:
 
             # Build arguments dynamically from config
             # -sS: SYN scan (fast, stealthy)
+            # -Pn: Skip host discovery (handles ICMP-blocked hosts)
             # -sV: Version detection
             # -T{n}: Timing template (3-5)
             # --open: Only show open ports
@@ -199,7 +220,7 @@ class PortScanner:
             # --min-rate: Minimum packets per second
             # --host-timeout: Max time per host
             args = (
-                f"-sS -sV -T{settings.scan_timing} --open "
+                f"-sS -Pn -sV -T{settings.scan_timing} --open "
                 f"--max-retries {settings.scan_max_retries}"
             )
             if settings.scan_min_rate > 0:
@@ -221,49 +242,127 @@ class PortScanner:
             logger.error("Unexpected error during TCP scan: %s", e)
             raise
 
-    def scan_udp(
-        self,
-        target: str,
-        ports: str = "1-1000",
-    ) -> Dict:
+    def scan_udp(self, target: str, ports: Optional[str] = None) -> Dict:
         """UDP scan (slower, scans top 1000 ports by default).
 
         Args:
             target: Hostname or IP address to scan.
-            ports: Port range to scan (default: top 1000).
+            ports: Optional port range/list to scan. If omitted, scans the top 1000 UDP ports.
 
         Returns:
             Dictionary with host_status and list of discovered ports.
         """
         try:
-            logger.info("Starting UDP scan of %s (ports %s)", target, ports)
+            udp_scope = ports if ports else "top 1000"
+            logger.info("Starting UDP scan of %s (%s)", target, udp_scope)
 
-            # Build arguments dynamically from config
-            # -sU: UDP scan
-            # -sV: Version detection
-            # -T{n}: Timing template (3-5)
-            # --max-retries: Limit retries (UDP is slow, keep at 1)
-            # --min-rate: Use half of TCP rate for UDP
-            # --host-timeout: Max time per host
-            # Note: We don't use --open for UDP because services like WireGuard
-            # don't respond to probes and show as "open|filtered"
-            args = (
-                f"-sU -sV -T{settings.scan_timing} "
-                f"--max-retries 1"
-            )
+            # Phase 1: Discovery scan (no version detection for speed).
+            discovery_args = f"-sU -Pn -T{settings.scan_timing} --max-retries 1"
+            if not ports:
+                discovery_args += f" --top-ports {settings.udp_top_ports}"
             if settings.scan_min_rate > 0:
-                # Use lower rate for UDP (it's inherently slower)
                 udp_rate = max(100, settings.scan_min_rate // 2)
-                args += f" --min-rate {udp_rate}"
-            args += f" --host-timeout {settings.scan_host_timeout}"
+                discovery_args += f" --min-rate {udp_rate}"
+            discovery_args += f" --host-timeout {settings.scan_host_timeout}"
 
-            self.nm.scan(
-                hosts=target,
-                ports=ports,
-                arguments=args,
+            self.nm.scan(hosts=target, ports=ports, arguments=discovery_args)
+
+            target_key = self._find_nmap_target_key(target)
+            if not target_key:
+                logger.warning("Target %s not found in scan results", target)
+                return {"host_status": "down", "ports": []}
+
+            host = self.nm[target_key]
+            host_status = host.state()
+
+            allowed_states = ("open", "open|filtered")
+            discovered_ports: List[Dict] = []
+            discovered_raw_states: Dict[int, str] = {}
+
+            if "udp" in host.all_protocols():
+                for port_num in host["udp"].keys():
+                    port_info = host["udp"][port_num]
+                    raw_state = port_info.get("state", "unknown")
+                    if raw_state not in allowed_states:
+                        continue
+
+                    discovered_raw_states[port_num] = raw_state
+                    discovered_ports.append({
+                        "port": port_num,
+                        "protocol": "udp",
+                        "state": "open",  # Normalize for storage/UX consistency
+                        "service": port_info.get("name", "unknown"),
+                        "version": "",
+                        "common_service": get_common_service_name(port_num, "udp"),
+                    })
+
+            # Phase 2: Optional version detection on a small subset of ports.
+            if settings.udp_version_detection and discovered_ports:
+                expected_set = {
+                    (p["port"], p["protocol"]) for p in settings.expected_ports_list
+                }
+
+                candidates: List[tuple[int, int]] = []
+                for port_entry in discovered_ports:
+                    port_num = port_entry["port"]
+                    priority = 0
+                    if (port_num, "udp") in expected_set:
+                        priority += 1_000
+                    if discovered_raw_states.get(port_num) == "open":
+                        priority += 100
+                    if port_entry.get("common_service"):
+                        priority += 10
+                    if priority > 0:
+                        candidates.append((priority, port_num))
+
+                # Stable, deterministic selection: highest priority first, then port number.
+                candidates.sort(key=lambda item: (-item[0], item[1]))
+                ports_to_version_scan: List[int] = []
+                seen: set[int] = set()
+                for _, port_num in candidates:
+                    if port_num in seen:
+                        continue
+                    seen.add(port_num)
+                    ports_to_version_scan.append(port_num)
+                    if len(ports_to_version_scan) >= settings.udp_version_detection_ports_limit:
+                        break
+
+                if ports_to_version_scan:
+                    version_args = (
+                        f"-sU -Pn {self._version_detection_args(settings.udp_version_detection_intensity)} "
+                        f"-T{settings.scan_timing} --max-retries 1"
+                    )
+                    if settings.scan_min_rate > 0:
+                        udp_rate = max(100, settings.scan_min_rate // 2)
+                        version_args += f" --min-rate {udp_rate}"
+                    version_args += f" --host-timeout {settings.scan_host_timeout}"
+
+                    self.nm.scan(
+                        hosts=target,
+                        ports=",".join(str(p) for p in ports_to_version_scan),
+                        arguments=version_args,
+                    )
+
+                    version_results = self._parse_results(target, "udp")
+                    version_map = {
+                        p["port"]: p for p in version_results.get("ports", [])
+                    }
+
+                    for port_entry in discovered_ports:
+                        version_entry = version_map.get(port_entry["port"])
+                        if not version_entry:
+                            continue
+                        port_entry["service"] = version_entry.get("service", port_entry["service"])
+                        port_entry["version"] = version_entry.get("version", port_entry["version"])
+
+            logger.info(
+                "UDP scan completed. Found %d UDP ports on %s (host: %s)",
+                len(discovered_ports),
+                target,
+                host_status,
             )
 
-            return self._parse_results(target, "udp")
+            return {"host_status": host_status, "ports": discovered_ports}
 
         except nmap.PortScannerError as e:
             logger.error("UDP scan failed: %s", e)
@@ -287,18 +386,12 @@ class PortScanner:
             "ports": [],
         }
 
-        # Check if target was found
-        if target not in self.nm.all_hosts():
-            # Try to find by resolved IP
-            for host in self.nm.all_hosts():
-                if self.nm[host].hostname() == target:
-                    target = host
-                    break
-            else:
-                logger.warning("Target %s not found in scan results", target)
-                return results
+        target_key = self._find_nmap_target_key(target)
+        if not target_key:
+            logger.warning("Target %s not found in scan results", target)
+            return results
 
-        host = self.nm[target]
+        host = self.nm[target_key]
         results["host_status"] = host.state()
 
         # Extract port information
@@ -366,15 +459,8 @@ class PortScanner:
             # -sS for TCP SYN scan, -sU for UDP
             scan_type = "-sS" if protocol == "tcp" else "-sU"
 
-            # Version detection intensity
-            if intensity == "light":
-                version_args = "-sV --version-light"
-            elif intensity == "thorough":
-                version_args = "-sV --version-all"
-            else:  # normal
-                version_args = "-sV"
-
-            args = f"{scan_type} {version_args} -T4 --host-timeout 30s"
+            version_args = self._version_detection_args(intensity)
+            args = f"{scan_type} -Pn {version_args} -T4 --host-timeout 30s"
 
             self.nm.scan(
                 hosts=target,
@@ -395,19 +481,13 @@ class PortScanner:
                 "scan_duration": round(duration, 2),
             }
 
-            # Check if host was found
-            if target not in self.nm.all_hosts():
-                # Try to find by resolved IP
-                for host in self.nm.all_hosts():
-                    if self.nm[host].hostname() == target:
-                        target = host
-                        break
-                else:
-                    logger.warning("Target %s not found in scan results", target)
-                    result["state"] = "unknown"
-                    return result
+            target_key = self._find_nmap_target_key(target)
+            if not target_key:
+                logger.warning("Target %s not found in scan results", target)
+                result["state"] = "unknown"
+                return result
 
-            host = self.nm[target]
+            host = self.nm[target_key]
 
             # Check if port was found in results
             if protocol in host.all_protocols():
@@ -433,6 +513,36 @@ class PortScanner:
         except Exception as e:
             logger.error("Unexpected error during single port scan: %s", e)
             raise
+
+    def enrich_tcp_services(self, target: str, ports: List[int], intensity: str) -> Dict[int, Dict]:
+        """Enrich TCP port entries with service/version detection via nmap.
+
+        Args:
+            target: Hostname or IP address to scan.
+            ports: List of TCP port numbers to enrich.
+            intensity: Version detection intensity ("light", "normal", "thorough").
+
+        Returns:
+            Mapping of port -> port details (service/version).
+        """
+        if not ports:
+            return {}
+
+        ports_limited = sorted(set(ports))[:settings.tcp_service_enrichment_ports_limit]
+        ports_arg = ",".join(str(p) for p in ports_limited)
+
+        args = (
+            f"-sS -Pn {self._version_detection_args(intensity)} "
+            f"-T{settings.scan_timing} --open --max-retries {settings.scan_max_retries}"
+        )
+        if settings.scan_min_rate > 0:
+            args += f" --min-rate {settings.scan_min_rate}"
+        args += f" --host-timeout {settings.scan_host_timeout}"
+
+        self.nm.scan(hosts=target, ports=ports_arg, arguments=args)
+
+        results = self._parse_results(target, "tcp")
+        return {p["port"]: p for p in results.get("ports", [])}
 
 
 async def scan_tcp_parallel(target: str, workers: int = 4) -> Dict:
@@ -572,11 +682,30 @@ async def run_full_scan() -> Optional[str]:
 
         # UDP scan uses nmap (top 1000 ports - UDP is inherently slow)
         udp_task = asyncio.to_thread(
-            scanner.scan_udp, target, "1-1000"
+            scanner.scan_udp, target
         )
 
         # Execute both scans concurrently
         tcp_results, udp_results = await asyncio.gather(tcp_task, udp_task)
+
+        # Optional: Enrich TCP service/version info after fast Rustscan discovery.
+        if settings.tcp_service_enrichment and tcp_results.get("ports"):
+            discovered_tcp_ports = [p["port"] for p in tcp_results["ports"]]
+            try:
+                enrichment_map = await asyncio.to_thread(
+                    scanner.enrich_tcp_services,
+                    target,
+                    discovered_tcp_ports,
+                    settings.tcp_service_enrichment_intensity,
+                )
+                for port_entry in tcp_results["ports"]:
+                    enriched = enrichment_map.get(port_entry["port"])
+                    if not enriched:
+                        continue
+                    port_entry["service"] = enriched.get("service", port_entry.get("service"))
+                    port_entry["version"] = enriched.get("version", port_entry.get("version"))
+            except Exception as e:
+                logger.warning("TCP service enrichment failed: %s", e)
 
         # Combine results
         all_ports = tcp_results["ports"] + udp_results["ports"]

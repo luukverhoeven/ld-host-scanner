@@ -28,6 +28,17 @@ class Settings(BaseSettings):
     rustscan_timeout: int = 3000       # Timeout per port in milliseconds
     rustscan_ulimit: int = 5000        # File descriptor limit
 
+    # Service detection enrichment (nmap - used after Rustscan TCP discovery)
+    tcp_service_enrichment: bool = True
+    tcp_service_enrichment_intensity: str = "light"  # "light", "normal", "thorough"
+    tcp_service_enrichment_ports_limit: int = 200
+
+    # UDP tuning
+    udp_top_ports: int = 1000
+    udp_version_detection: bool = True
+    udp_version_detection_intensity: str = "light"  # "light", "normal", "thorough"
+    udp_version_detection_ports_limit: int = 50
+
     # Data storage
     data_dir: Path = Path("/app/data")
 

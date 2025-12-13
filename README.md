@@ -85,6 +85,13 @@ Open your browser to: **http://localhost:8080**
 | `WEBHOOK_URL` | - | Discord/Slack webhook URL |
 | `TZ` | `Europe/Amsterdam` | Timezone |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `TCP_SERVICE_ENRICHMENT` | `true` | Run targeted TCP `nmap -sV` on Rustscan hits |
+| `TCP_SERVICE_ENRICHMENT_INTENSITY` | `light` | TCP version detection intensity (`light|normal|thorough`) |
+| `TCP_SERVICE_ENRICHMENT_PORTS_LIMIT` | `200` | Max TCP ports to version-scan per run |
+| `UDP_TOP_PORTS` | `1000` | UDP `nmap --top-ports` count when no range is set |
+| `UDP_VERSION_DETECTION` | `true` | Run UDP version detection on prioritized ports |
+| `UDP_VERSION_DETECTION_INTENSITY` | `light` | UDP version detection intensity (`light|normal|thorough`) |
+| `UDP_VERSION_DETECTION_PORTS_LIMIT` | `50` | Max UDP ports to version-scan per run |
 
 ### Scan Intervals
 
