@@ -56,12 +56,10 @@ async def check_host_tcp_connect(
     Returns:
         True if connection successful, False otherwise.
     """
+    writer = None
     try:
-        loop = asyncio.get_event_loop()
         future = asyncio.open_connection(target, port)
         reader, writer = await asyncio.wait_for(future, timeout=timeout)
-        writer.close()
-        await writer.wait_closed()
         logger.debug("TCP connect to %s:%d successful", target, port)
         return True
     except asyncio.TimeoutError:
@@ -74,6 +72,13 @@ async def check_host_tcp_connect(
     except Exception as e:
         logger.debug("TCP connect to %s:%d failed: %s", target, port, e)
         return False
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass  # Ignore cleanup errors
 
 
 async def check_host_ping(target: str, timeout: float = 2.0, count: int = 1) -> bool:

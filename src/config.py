@@ -1,11 +1,13 @@
 """Application configuration from environment variables."""
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from zoneinfo import ZoneInfo
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -13,7 +15,35 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # Target configuration
-    target_host: str = "example.com"
+    target_host: str = "example.com"  # Must be configured via TARGET_HOST env var
+
+    @field_validator('target_host')
+    @classmethod
+    def validate_hostname(cls, v: str) -> str:
+        """Validate hostname/IP to prevent command injection.
+
+        Validates against RFC 1123 hostname format and rejects shell metacharacters.
+        """
+        # RFC 1123 hostname pattern (allows digits at start)
+        hostname_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
+        # IPv4 pattern
+        ipv4_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+
+        if not v:
+            raise ValueError('target_host cannot be empty')
+        if len(v) > 253:
+            raise ValueError('hostname too long (max 253 chars)')
+
+        # Check for shell metacharacters
+        dangerous_chars = set(';&|`$(){}[]<>\\\'\"!#*?~')
+        if any(c in v for c in dangerous_chars):
+            raise ValueError('hostname contains invalid characters')
+
+        if not (re.match(hostname_pattern, v) or re.match(ipv4_pattern, v)):
+            raise ValueError('invalid hostname format')
+
+        return v
+
     scan_interval_hours: int = 2
 
     # Scan performance tuning (nmap - used for UDP)

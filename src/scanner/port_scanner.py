@@ -446,8 +446,6 @@ class PortScanner:
         Returns:
             Dictionary with port info including service and version details.
         """
-        import time
-
         start_time = time.time()
 
         try:
@@ -813,7 +811,7 @@ async def run_full_scan() -> Optional[str]:
         return scan_id
 
     except Exception as e:
-        logger.error("Scan %s failed: %s", scan_id, e)
+        logger.exception("Scan %s failed: %s", scan_id, e)
         scans_total.labels(status="failed", target=target).inc()
         await save_scan(
             scan_id,
@@ -821,7 +819,7 @@ async def run_full_scan() -> Optional[str]:
             "full",
             started_at,
             "failed",
-            error_message=str(e),
+            error_message=f"{type(e).__name__}: {str(e)}",
             completed_at=datetime.utcnow(),
         )
         return None

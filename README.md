@@ -60,8 +60,6 @@ docker-compose logs -f
 
 # Stop the container
 docker-compose down
-
-docker-compose remove
 ```
 
 ### 4. Access the dashboard
@@ -74,7 +72,7 @@ Open your browser to: **http://localhost:8080**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TARGET_HOST` | `example.com` | Host to scan |
+| `TARGET_HOST` | `example.com` | Host to scan (must be configured) |
 | `SCAN_INTERVAL_HOURS` | `2` | Full scan frequency |
 | `SMTP_HOST` | - | SMTP server hostname |
 | `SMTP_PORT` | `587` | SMTP server port |
@@ -135,6 +133,24 @@ The container requires specific Linux capabilities for nmap to function:
 
 These are configured in `docker-compose.yml`.
 
+## Testing
+
+Tests run inside Docker to ensure the correct environment with all dependencies:
+
+```bash
+# Run all tests
+docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" security-scanner \
+  sh -c "pip install -q pytest pytest-asyncio && python -m pytest tests/ -v"
+
+# Run with coverage
+docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" security-scanner \
+  sh -c "pip install -q pytest pytest-asyncio pytest-cov && python -m pytest tests/ --cov=src --cov-report=term-missing"
+
+# Run a single test file
+docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" security-scanner \
+  sh -c "pip install -q pytest pytest-asyncio && python -m pytest tests/test_port_scanner.py -v"
+```
+
 ## Project Structure
 
 ```
@@ -150,6 +166,7 @@ security-scan-external/
 │   ├── notifications/       # Email & webhook alerts
 │   ├── scheduler/           # Job scheduling
 │   └── web/                 # FastAPI dashboard
+├── tests/                   # Test suite (pytest)
 ├── data/                    # Persistent data (SQLite)
 ├── requirements.txt
 ├── .env.example

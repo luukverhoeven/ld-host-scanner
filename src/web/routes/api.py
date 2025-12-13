@@ -90,7 +90,7 @@ class PortRescanResponse(BaseModel):
 @router.get("/scans", response_model=List[ScanResponse])
 async def list_scans(
     limit: int = Query(20, ge=1, le=200),
-    offset: int = Query(0, ge=0, le=10_000),
+    offset: int = Query(0, ge=0, le=1_000),
 ):
     """Get list of recent scans."""
     scans = await get_recent_scans(limit=limit, offset=offset)

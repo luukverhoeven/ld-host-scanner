@@ -1,5 +1,6 @@
 """Database operations and session management."""
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -15,6 +16,10 @@ logger = logging.getLogger(__name__)
 # Async engine and session factory
 engine = None
 async_session_factory = None
+
+# Lock to prevent race condition in database initialization
+_init_lock = asyncio.Lock()
+_initialized = False
 
 
 async def init_database() -> None:
@@ -51,6 +56,9 @@ async def run_migrations() -> None:
     """Run database migrations to add missing columns."""
     from sqlalchemy import text
 
+    # Whitelist of valid table names for SQL injection prevention
+    VALID_TABLES = {'ports', 'host_status', 'scans'}
+
     migrations = [
         # Add common_service column to ports table
         ("ports", "common_service", "ALTER TABLE ports ADD COLUMN common_service VARCHAR(50)"),
@@ -64,7 +72,13 @@ async def run_migrations() -> None:
 
     async with engine.begin() as conn:
         for table, column, sql in migrations:
+            # Validate table name against whitelist to prevent SQL injection
+            if table not in VALID_TABLES:
+                logger.warning("Skipping migration for unknown table: %s", table)
+                continue
+
             # Check if column exists
+            # Note: PRAGMA doesn't support parameters, but table is whitelist-validated
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
             columns = [row[1] for row in result.fetchall()]
 
@@ -78,8 +92,15 @@ async def run_migrations() -> None:
 
 async def get_session() -> AsyncSession:
     """Get a database session."""
-    if async_session_factory is None:
-        await init_database()
+    global _initialized
+
+    if not _initialized:
+        async with _init_lock:
+            # Double-check after acquiring lock to prevent race condition
+            if not _initialized:
+                await init_database()
+                _initialized = True
+
     return async_session_factory()
 
 
