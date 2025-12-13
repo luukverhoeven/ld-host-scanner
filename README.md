@@ -22,7 +22,7 @@ A Docker-based network security scanner that monitors your home network for open
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone git@github.com:luukverhoeven/ld-host-scanner.git
 cd ld-host-scanner
 
 # Copy example environment file
