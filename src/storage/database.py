@@ -169,14 +169,23 @@ async def update_scan_progress(
             await session.commit()
 
 
-async def get_scan_progress(scan_id: str) -> Optional[Dict]:
+async def get_scan_progress(scan_id: str, after_port_index: int = 0) -> Optional[Dict]:
     """Get current scan progress for SSE streaming.
 
-    Returns scan progress including activity log and TCP/UDP status
-    from the in-memory activity log store.
+    Returns scan progress including activity log, TCP/UDP status,
+    and discovered ports from the in-memory activity log store.
+
+    Args:
+        scan_id: The scan identifier.
+        after_port_index: Return only discovered ports after this index (for incremental updates).
     """
     # Import here to avoid circular imports
-    from src.scanner.activity_log import get_activity_log, get_scan_state
+    from src.scanner.activity_log import (
+        get_activity_log,
+        get_scan_state,
+        get_discovered_ports,
+        get_discovered_ports_count,
+    )
 
     async with await get_session() as session:
         result = await session.execute(
@@ -187,9 +196,11 @@ async def get_scan_progress(scan_id: str) -> Optional[Dict]:
         if not scan:
             return None
 
-        # Get in-memory state (TCP/UDP status and activity log)
+        # Get in-memory state (TCP/UDP status, activity log, discovered ports)
         scan_state = get_scan_state(scan_id)
         activity_log = get_activity_log(scan_id)
+        discovered_ports = get_discovered_ports(scan_id, after_port_index)
+        discovered_ports_count = get_discovered_ports_count(scan_id)
 
         return {
             "scan_id": scan.scan_id,
@@ -198,7 +209,11 @@ async def get_scan_progress(scan_id: str) -> Optional[Dict]:
             "tcp_ports_found": scan.tcp_ports_found or 0,
             "udp_ports_found": scan.udp_ports_found or 0,
             "host_status": scan.host_status,
-            # New fields for enhanced progress tracking
+            # Scan context
+            "target": scan.target,
+            "scan_type": scan.scan_type,
+            "trigger_source": scan_state.get("trigger_source"),
+            # Enhanced progress tracking
             "started_at": scan.started_at.isoformat() + "Z" if scan.started_at else None,
             "tcp_status": scan_state.get("tcp_status", "not_started"),
             "udp_status": scan_state.get("udp_status", "not_started"),
@@ -206,6 +221,12 @@ async def get_scan_progress(scan_id: str) -> Optional[Dict]:
             "tcp_completed_at": scan_state.get("tcp_completed_at"),
             "udp_started_at": scan_state.get("udp_started_at"),
             "udp_completed_at": scan_state.get("udp_completed_at"),
+            "current_sub_phase": scan_state.get("current_sub_phase"),
+            "enrichment_progress": scan_state.get("enrichment_progress", {"done": 0, "total": 0}),
+            # Live port discovery (incremental)
+            "discovered_ports": discovered_ports,
+            "discovered_ports_count": discovered_ports_count,
+            # Activity log
             "activity_log": activity_log,
         }
 

@@ -133,14 +133,16 @@ async def update_scan_state(scan_id: str, **kwargs) -> None:
                 "tcp_completed_at": None,
                 "udp_started_at": None,
                 "udp_completed_at": None,
+                "trigger_source": None,
+                "current_sub_phase": None,
+                "enrichment_progress": {"done": 0, "total": 0},
             }
 
         for key, value in kwargs.items():
-            if key in _scan_states[scan_id]:
-                # Convert datetime to ISO string for JSON serialization
-                if isinstance(value, datetime):
-                    value = value.isoformat() + "Z"
-                _scan_states[scan_id][key] = value
+            # Convert datetime to ISO string for JSON serialization
+            if isinstance(value, datetime):
+                value = value.isoformat() + "Z"
+            _scan_states[scan_id][key] = value
 
 
 def get_scan_state(scan_id: str) -> Dict[str, Any]:
@@ -150,7 +152,7 @@ def get_scan_state(scan_id: str) -> Dict[str, Any]:
         scan_id: The scan identifier.
 
     Returns:
-        Dictionary with tcp_status, udp_status, and timestamps.
+        Dictionary with tcp_status, udp_status, timestamps, and enhanced fields.
     """
     return _scan_states.get(scan_id, {
         "tcp_status": "not_started",
@@ -159,6 +161,9 @@ def get_scan_state(scan_id: str) -> Dict[str, Any]:
         "tcp_completed_at": None,
         "udp_started_at": None,
         "udp_completed_at": None,
+        "trigger_source": None,
+        "current_sub_phase": None,
+        "enrichment_progress": {"done": 0, "total": 0},
     })
 
 
@@ -173,8 +178,77 @@ async def clear_scan_data(scan_id: str) -> None:
             del _activity_logs[scan_id]
         if scan_id in _scan_states:
             del _scan_states[scan_id]
+        if scan_id in _discovered_ports:
+            del _discovered_ports[scan_id]
         if scan_id in _locks:
             del _locks[scan_id]
+
+
+def add_discovered_port(
+    scan_id: str,
+    port: int,
+    protocol: str,
+    service: Optional[str] = None,
+    common_service: Optional[str] = None
+) -> None:
+    """Add a discovered port to the live feed.
+
+    Args:
+        scan_id: The scan identifier.
+        port: Port number.
+        protocol: Protocol type ('tcp' or 'udp').
+        service: Detected service name.
+        common_service: Common service name from lookup.
+    """
+    if scan_id not in _discovered_ports:
+        _discovered_ports[scan_id] = []
+
+    # Prevent duplicates
+    for existing in _discovered_ports[scan_id]:
+        if existing["port"] == port and existing["protocol"] == protocol:
+            return
+
+    port_info = {
+        "port": port,
+        "protocol": protocol,
+        "service": service,
+        "common_service": common_service,
+        "discovered_at": datetime.utcnow().isoformat() + "Z",
+    }
+    _discovered_ports[scan_id].append(port_info)
+
+    # Trim if over limit
+    if len(_discovered_ports[scan_id]) > MAX_DISCOVERED_PORTS:
+        _discovered_ports[scan_id] = _discovered_ports[scan_id][-MAX_DISCOVERED_PORTS:]
+
+
+def get_discovered_ports(
+    scan_id: str,
+    after_index: int = 0
+) -> List[Dict[str, Any]]:
+    """Get discovered ports, optionally after a specific index for incremental updates.
+
+    Args:
+        scan_id: The scan identifier.
+        after_index: Return only ports discovered after this index (0-based).
+
+    Returns:
+        List of port info dictionaries.
+    """
+    ports = _discovered_ports.get(scan_id, [])
+    return ports[after_index:]
+
+
+def get_discovered_ports_count(scan_id: str) -> int:
+    """Get the total count of discovered ports.
+
+    Args:
+        scan_id: The scan identifier.
+
+    Returns:
+        Number of discovered ports.
+    """
+    return len(_discovered_ports.get(scan_id, []))
 
 
 async def delayed_cleanup(scan_id: str, delay: int = 60) -> None:

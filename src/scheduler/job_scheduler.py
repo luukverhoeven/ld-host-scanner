@@ -76,6 +76,7 @@ def start_scheduler() -> None:
         id="full_scan",
         name="Full Port Scan",
         replace_existing=True,
+        kwargs={"trigger_source": "scheduled"},
     )
     logger.info(
         "Scheduled full scan every %d hours",
@@ -100,6 +101,7 @@ def start_scheduler() -> None:
         id="initial_scan",
         name="Initial Scan on Startup",
         replace_existing=True,
+        kwargs={"trigger_source": "scheduled"},
     )
     logger.info("Scheduled initial scan on startup (30s delay)")
 
@@ -166,9 +168,10 @@ async def trigger_manual_scan() -> str:
             id="manual_scan",
             name="Manual Scan",
             replace_existing=True,
+            kwargs={"trigger_source": "manual"},
         )
         return "Manual scan triggered"
     else:
         # Run directly if scheduler not available
-        await run_full_scan()
+        await run_full_scan(trigger_source="manual")
         return "Manual scan completed"

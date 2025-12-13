@@ -11,6 +11,7 @@ handshake initiation. Without proper crypto, WireGuard will silently drop packet
 """
 
 import base64
+import hashlib
 import logging
 import os
 import socket
@@ -98,6 +99,25 @@ class WireGuardProbe:
         Returns:
             148-byte handshake initiation packet.
         """
+        header = self._build_handshake_init_header()
+
+        # MAC1 is required for the server to even consider replying (cookie reply mitigation).
+        # When we know the server public key, we can compute a valid MAC1; otherwise we fall back
+        # to random bytes (which WireGuard will drop silently).
+        mac1 = self._compute_mac1(header)
+
+        # MAC2 (16 bytes) - zeros if no previous cookie
+        mac2 = b'\x00' * 16
+
+        packet = header + mac1 + mac2
+
+        if len(packet) != 148:
+            logger.warning("Built packet has unexpected size: %d (expected 148)", len(packet))
+
+        return packet
+
+    def _build_handshake_init_header(self) -> bytes:
+        """Build the handshake initiation header (packet without MACs)."""
         # Message type (1 = handshake initiation)
         msg_type = struct.pack("<I", MESSAGE_TYPE_HANDSHAKE_INIT)
 
@@ -114,18 +134,22 @@ class WireGuardProbe:
         # Encrypted timestamp (28 bytes) - would be TAI64N timestamp
         encrypted_timestamp = os.urandom(28)
 
-        # MAC1 (16 bytes) - would be BLAKE2s keyed hash
-        mac1 = os.urandom(16)
+        packet = msg_type + sender_index + ephemeral + encrypted_static + encrypted_timestamp
 
-        # MAC2 (16 bytes) - zeros if no previous cookie
-        mac2 = b'\x00' * 16
-
-        packet = msg_type + sender_index + ephemeral + encrypted_static + encrypted_timestamp + mac1 + mac2
-
-        if len(packet) != 148:
-            logger.warning("Built packet has unexpected size: %d (expected 148)", len(packet))
+        if len(packet) != 116:
+            logger.warning("Built header has unexpected size: %d (expected 116)", len(packet))
 
         return packet
+
+    def _compute_mac1(self, packet_header: bytes) -> bytes:
+        """Compute a valid WireGuard MAC1 when server public key is known."""
+        if not self.server_public_key:
+            return os.urandom(16)
+
+        # WireGuard uses BLAKE2s keyed MAC; the mac1 key is derived from the server static key.
+        # mac1_key = BLAKE2s("mac1----" || server_static_public_key)
+        mac1_key = hashlib.blake2s(b"mac1----" + self.server_public_key, digest_size=32).digest()
+        return hashlib.blake2s(packet_header, digest_size=16, key=mac1_key).digest()
 
     def probe(self, host: str, port: int, timeout: float = 3.0) -> Dict:
         """Send handshake initiation and check for response.

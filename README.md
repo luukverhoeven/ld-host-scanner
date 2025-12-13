@@ -94,7 +94,7 @@ Open your browser to: **http://localhost:8080**
 | `UDP_VERSION_DETECTION_INTENSITY` | `light` | UDP version detection intensity (`light|normal|thorough`) |
 | `UDP_VERSION_DETECTION_PORTS_LIMIT` | `50` | Max UDP ports to version-scan per run |
 | `EXPECTED_PORTS` | - | Ports that should be open (e.g., `80/tcp,443/tcp,448/udp`) |
-| `WIREGUARD_PUBLIC_KEY` | - | WireGuard server public key (base64) for probe verification |
+| `WIREGUARD_PUBLIC_KEY` | - | WireGuard server public key (base64) for probe verification. **Quote the value** as it contains `=` |
 | `WIREGUARD_PROBE_PORTS` | - | Ports to probe for WireGuard (default: 448, 51820) |
 
 ### Scan Intervals
@@ -133,7 +133,8 @@ If you want to actively verify WireGuard is running, provide the server's public
 ```bash
 # In .env
 EXPECTED_PORTS=448/udp
-WIREGUARD_PUBLIC_KEY=<your-wireguard-server-public-key-base64>
+# Quote the key - it contains = characters (base64 padding)
+WIREGUARD_PUBLIC_KEY="<your-wireguard-server-public-key-base64>"
 ```
 
 The scanner will send a WireGuard handshake probe. If WireGuard responds (even with a rate-limit cookie), it's marked as "verified" instead of "stealth".

@@ -96,3 +96,17 @@ class TestWebhookConfigured:
 
         settings = Settings(webhook_url="")
         assert settings.webhook_configured is False
+
+
+class TestWireGuardProbePorts:
+    """Tests for WireGuard probe ports parsing."""
+
+    def test_wireguard_probe_ports_default(self):
+        """Defaults to promote common WireGuard ports."""
+        settings = Settings(wireguard_probe_ports=None)
+        assert settings.wireguard_probe_ports_list == [448, 51820]
+
+    def test_wireguard_probe_ports_parsing(self):
+        """Parses configured ports list."""
+        settings = Settings(wireguard_probe_ports="51820, 12345")
+        assert settings.wireguard_probe_ports_list == [51820, 12345]

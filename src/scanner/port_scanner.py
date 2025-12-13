@@ -18,6 +18,7 @@ from src.scanner.activity_log import (
     add_log_entry_sync,
     update_scan_state,
     delayed_cleanup,
+    add_discovered_port,
 )
 from src.storage.database import (
     save_scan,
@@ -97,6 +98,10 @@ class PortScanner:
                     target, port_num, result["message"],
                 )
             else:
+                if port_entry.get("common_service") == "wireguard":
+                    port_entry["is_stealth"] = True
+                    if not port_entry.get("version"):
+                        port_entry["version"] = "no response (possible stealth)"
                 logger.debug(
                     "WireGuard probe on %s:%d: %s",
                     target, port_num, result["message"],
@@ -307,59 +312,37 @@ class PortScanner:
             Dictionary with host_status and list of discovered ports.
         """
         try:
-            # Get expected UDP ports to ensure they're always scanned
-            expected_udp_ports = [
-                str(p["port"]) for p in settings.expected_ports_list
-                if p["protocol"] == "udp"
-            ]
-
-            udp_scope = ports if ports else "top 1000"
-            if expected_udp_ports:
-                udp_scope += f" + expected: {','.join(expected_udp_ports)}"
-            logger.info("Starting UDP scan of %s (%s)", target, udp_scope)
-
-            # Phase 1: Discovery scan (no version detection for speed).
-            discovery_args = f"-sU -Pn -T{settings.scan_timing} --max-retries 1"
-
-            # Build port specification
-            if ports:
-                # Custom port range provided
-                scan_ports = ports
-            else:
-                # Use top-ports + any expected UDP ports
-                discovery_args += f" --top-ports {settings.udp_top_ports}"
-                # Append expected ports explicitly so they're always scanned
-                if expected_udp_ports:
-                    scan_ports = ",".join(expected_udp_ports)
-                else:
-                    scan_ports = None
-
-            if settings.scan_min_rate > 0:
-                udp_rate = max(100, settings.scan_min_rate // 2)
-                discovery_args += f" --min-rate {udp_rate}"
-            discovery_args += f" --host-timeout {settings.scan_host_timeout}"
-
-            self.nm.scan(hosts=target, ports=scan_ports, arguments=discovery_args)
-
-            target_key = self._find_nmap_target_key(target)
-            if not target_key:
-                logger.warning("Target %s not found in scan results", target)
-                return {"host_status": "down", "ports": []}
-
-            host = self.nm[target_key]
-            host_status = host.state()
-
-            allowed_states = ("open", "open|filtered")
-            discovered_ports: List[Dict] = []
-            discovered_raw_states: Dict[int, str] = {}
-
-            # Build set of expected UDP ports for stealth detection
-            expected_udp_set = {
+            # Extra UDP ports to always scan (expected + WireGuard probe ports).
+            # This avoids relying on nmap's top-N list (WireGuard is often not in the top 1000).
+            expected_udp_ports = {
                 p["port"] for p in settings.expected_ports_list
                 if p["protocol"] == "udp"
             }
+            extra_udp_ports = expected_udp_ports | set(settings.wireguard_probe_ports_list)
 
-            if "udp" in host.all_protocols():
+            udp_scope = ports if ports else f"top {settings.udp_top_ports}"
+            if not ports and extra_udp_ports:
+                udp_scope += f" + extra: {','.join(str(p) for p in sorted(extra_udp_ports))}"
+            logger.info("Starting UDP scan of %s (%s)", target, udp_scope)
+
+            allowed_states = ("open", "open|filtered")
+            discovered_ports_by_port: Dict[int, Dict] = {}
+            discovered_raw_states: Dict[int, str] = {}
+            host_status = "down"
+
+            def collect_udp_results() -> None:
+                nonlocal host_status
+
+                target_key = self._find_nmap_target_key(target)
+                if not target_key:
+                    return
+
+                host = self.nm[target_key]
+                host_status = "up" if host.state() == "up" else host_status
+
+                if "udp" not in host.all_protocols():
+                    return
+
                 for port_num in host["udp"].keys():
                     port_info = host["udp"][port_num]
                     raw_state = port_info.get("state", "unknown")
@@ -368,22 +351,68 @@ class PortScanner:
 
                     discovered_raw_states[port_num] = raw_state
 
-                    # Mark as stealth if: expected port + "open|filtered" state
-                    # Stealth services (like WireGuard) don't respond to probes
-                    is_stealth = (
-                        raw_state == "open|filtered" and
-                        port_num in expected_udp_set
+                    common_service = get_common_service_name(port_num, "udp")
+                    is_stealth = raw_state == "open|filtered" and (
+                        port_num in expected_udp_ports or common_service == "wireguard"
                     )
 
-                    discovered_ports.append({
+                    existing = discovered_ports_by_port.get(port_num)
+                    if existing:
+                        existing["is_stealth"] = existing.get("is_stealth", False) or is_stealth
+                        if existing.get("service") in (None, "", "unknown"):
+                            existing["service"] = port_info.get("name", "unknown")
+                        if not existing.get("common_service") and common_service:
+                            existing["common_service"] = common_service
+                        continue
+
+                    discovered_ports_by_port[port_num] = {
                         "port": port_num,
                         "protocol": "udp",
                         "state": "open",  # Normalize for storage/UX consistency
                         "service": port_info.get("name", "unknown"),
                         "version": "",
-                        "common_service": get_common_service_name(port_num, "udp"),
+                        "common_service": common_service,
                         "is_stealth": is_stealth,
-                    })
+                    }
+
+            # Phase 1a: Top ports discovery scan (no version detection for speed).
+            if ports:
+                discovery_args = f"-sU -Pn -T{settings.scan_timing} --max-retries 1"
+                if settings.scan_min_rate > 0:
+                    udp_rate = max(100, settings.scan_min_rate // 2)
+                    discovery_args += f" --min-rate {udp_rate}"
+                discovery_args += f" --host-timeout {settings.scan_host_timeout}"
+                self.nm.scan(hosts=target, ports=ports, arguments=discovery_args)
+                collect_udp_results()
+            else:
+                discovery_args = (
+                    f"-sU -Pn -T{settings.scan_timing} --max-retries 1 --top-ports {settings.udp_top_ports}"
+                )
+                if settings.scan_min_rate > 0:
+                    udp_rate = max(100, settings.scan_min_rate // 2)
+                    discovery_args += f" --min-rate {udp_rate}"
+                discovery_args += f" --host-timeout {settings.scan_host_timeout}"
+                self.nm.scan(hosts=target, ports=None, arguments=discovery_args)
+                collect_udp_results()
+
+                # Phase 1b: Explicit scan for expected + WireGuard ports.
+                # nmap doesn't allow combining `--top-ports` with explicit `-p`,
+                # so we do a second targeted scan and merge results.
+                if extra_udp_ports:
+                    extra_ports_arg = ",".join(str(p) for p in sorted(extra_udp_ports))
+                    extra_args = f"-sU -Pn -T{settings.scan_timing} --max-retries 1"
+                    if settings.scan_min_rate > 0:
+                        udp_rate = max(100, settings.scan_min_rate // 2)
+                        extra_args += f" --min-rate {udp_rate}"
+                    extra_args += f" --host-timeout {settings.scan_host_timeout}"
+                    self.nm.scan(hosts=target, ports=extra_ports_arg, arguments=extra_args)
+                    collect_udp_results()
+
+            if not discovered_ports_by_port:
+                logger.warning("No UDP ports discovered for %s", target)
+                return {"host_status": host_status, "ports": []}
+
+            discovered_ports = [discovered_ports_by_port[p] for p in sorted(discovered_ports_by_port)]
 
             # Phase 2: Optional version detection on a small subset of ports.
             if settings.udp_version_detection and discovered_ports:
@@ -740,8 +769,11 @@ def update_expected_ports_metrics(
     expected_ports_missing.labels(target=target).set(len(missing_ports))
 
 
-async def run_full_scan() -> Optional[str]:
+async def run_full_scan(trigger_source: str = "scheduled") -> Optional[str]:
     """Execute full TCP and UDP scan.
+
+    Args:
+        trigger_source: How the scan was triggered - 'manual' or 'scheduled'.
 
     Returns:
         Scan ID if successful, None if failed.
@@ -757,13 +789,13 @@ async def run_full_scan() -> Optional[str]:
     started_at = datetime.utcnow()
     start_time = time.time()
 
-    logger.info("Starting full scan %s for %s", scan_id, target)
+    logger.info("Starting full scan %s for %s (trigger: %s)", scan_id, target, trigger_source)
 
     scanner = PortScanner()
 
     try:
-        # Initialize activity log and scan state
-        await init_scan_state(scan_id)
+        # Initialize activity log and scan state with trigger source
+        await init_scan_state(scan_id, trigger_source=trigger_source)
         await add_log_entry(scan_id, "Scan initiated", "info")
         await add_log_entry(scan_id, f"Target: {target}", "info")
 
@@ -783,17 +815,43 @@ async def run_full_scan() -> Optional[str]:
         await update_scan_state(scan_id, udp_status="in_progress", udp_started_at=datetime.utcnow())
         await add_log_entry(scan_id, f"Starting UDP scan with nmap (top {settings.udp_top_ports} ports)", "info")
 
-        # Wrapper functions to capture individual scan completion
+        # Wrapper functions to capture individual scan completion and add ports to live feed
         async def run_tcp_scan():
+            await update_scan_state(scan_id, current_sub_phase="tcp_discovery")
             result = await asyncio.to_thread(scanner.scan_tcp_rustscan, target, "1-65535")
-            tcp_count = len(result.get("ports", []))
+            tcp_ports = result.get("ports", [])
+            tcp_count = len(tcp_ports)
+
+            # Add discovered ports to live feed
+            for port_info in tcp_ports:
+                add_discovered_port(
+                    scan_id,
+                    port_info["port"],
+                    port_info["protocol"],
+                    port_info.get("service"),
+                    port_info.get("common_service"),
+                )
+
             await update_scan_state(scan_id, tcp_status="completed", tcp_completed_at=datetime.utcnow())
             await add_log_entry(scan_id, f"TCP scan completed: found {tcp_count} open ports", "success")
             return result
 
         async def run_udp_scan():
+            await update_scan_state(scan_id, current_sub_phase="udp_discovery")
             result = await asyncio.to_thread(scanner.scan_udp, target)
-            udp_count = len(result.get("ports", []))
+            udp_ports = result.get("ports", [])
+            udp_count = len(udp_ports)
+
+            # Add discovered ports to live feed
+            for port_info in udp_ports:
+                add_discovered_port(
+                    scan_id,
+                    port_info["port"],
+                    port_info["protocol"],
+                    port_info.get("service"),
+                    port_info.get("common_service"),
+                )
+
             await update_scan_state(scan_id, udp_status="completed", udp_completed_at=datetime.utcnow())
             await add_log_entry(scan_id, f"UDP scan completed: found {udp_count} open ports", "success")
             return result
@@ -808,8 +866,11 @@ async def run_full_scan() -> Optional[str]:
 
         # Optional: Enrich TCP service/version info after fast Rustscan discovery.
         if settings.tcp_service_enrichment and tcp_results.get("ports"):
-            await add_log_entry(scan_id, f"Detecting services on {tcp_port_count} TCP ports...", "info")
+            await update_scan_state(scan_id, current_sub_phase="service_detection")
             discovered_tcp_ports = [p["port"] for p in tcp_results["ports"]]
+            enrichment_total = min(len(discovered_tcp_ports), settings.tcp_service_enrichment_ports_limit)
+            await update_scan_state(scan_id, enrichment_progress={"done": 0, "total": enrichment_total})
+            await add_log_entry(scan_id, f"Detecting services on {enrichment_total} TCP ports...", "info")
             try:
                 enrichment_map = await asyncio.to_thread(
                     scanner.enrich_tcp_services,
@@ -817,13 +878,16 @@ async def run_full_scan() -> Optional[str]:
                     discovered_tcp_ports,
                     settings.tcp_service_enrichment_intensity,
                 )
+                enriched_count = 0
                 for port_entry in tcp_results["ports"]:
                     enriched = enrichment_map.get(port_entry["port"])
                     if not enriched:
                         continue
                     port_entry["service"] = enriched.get("service", port_entry.get("service"))
                     port_entry["version"] = enriched.get("version", port_entry.get("version"))
-                await add_log_entry(scan_id, "Service detection completed", "success")
+                    enriched_count += 1
+                await update_scan_state(scan_id, enrichment_progress={"done": enriched_count, "total": enrichment_total})
+                await add_log_entry(scan_id, f"Service detection completed ({enriched_count} services identified)", "success")
             except Exception as e:
                 logger.warning("TCP service enrichment failed: %s", e)
                 await add_log_entry(scan_id, f"Service detection failed: {e}", "warning")
@@ -840,6 +904,7 @@ async def run_full_scan() -> Optional[str]:
         # Update progress before saving
         tcp_port_count = len(tcp_results.get("ports", []))
         udp_port_count = len(udp_results.get("ports", []))
+        await update_scan_state(scan_id, current_sub_phase="saving_results")
         await update_scan_progress(scan_id, "saving", tcp_port_count, udp_port_count)
         await add_log_entry(scan_id, "Saving results to database...", "info")
 
