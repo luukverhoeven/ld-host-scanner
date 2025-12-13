@@ -5,6 +5,11 @@
 // Active SSE connection
 let progressEventSource = null;
 
+// Scan timing state
+let scanStartTime = null;
+let elapsedTimerId = null;
+let lastLogCount = 0;
+
 // Phase display names
 const PHASE_NAMES = {
     'starting': 'Starting scan...',
@@ -14,11 +19,161 @@ const PHASE_NAMES = {
     'completed': 'Scan complete!'
 };
 
+// Status icons for TCP/UDP indicators
+const STATUS_ICONS = {
+    'not_started': '&#9675;',  // Empty circle
+    'in_progress': '&#9684;',  // Half circle
+    'completed': '&#9679;'     // Filled circle
+};
+
+// Status text mapping
+const STATUS_TEXT = {
+    'not_started': 'Waiting...',
+    'in_progress': 'Scanning...',
+    'completed': 'Done'
+};
+
+// Update elapsed time display
+function updateElapsedTime() {
+    if (!scanStartTime) return;
+
+    const elapsed = Date.now() - scanStartTime;
+    const minutes = Math.floor(elapsed / 60000);
+    const seconds = Math.floor((elapsed % 60000) / 1000);
+
+    const elapsedEl = document.getElementById('elapsed-time');
+    if (elapsedEl) {
+        elapsedEl.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    // Update ETA based on progress
+    updateETA(elapsed);
+}
+
+// Calculate and display ETA
+function updateETA(elapsedMs) {
+    const progressFill = document.getElementById('progress-fill');
+    const etaEl = document.getElementById('eta-time');
+    if (!progressFill || !etaEl) return;
+
+    const progressWidth = parseFloat(progressFill.style.width) || 0;
+
+    if (progressWidth > 10 && progressWidth < 100) {
+        // Estimate based on current progress
+        const estimatedTotal = (elapsedMs / progressWidth) * 100;
+        const remaining = Math.max(0, estimatedTotal - elapsedMs);
+
+        const minutes = Math.floor(remaining / 60000);
+        const seconds = Math.floor((remaining % 60000) / 1000);
+
+        etaEl.textContent = `~${minutes}m ${seconds}s`;
+    } else if (progressWidth >= 100) {
+        etaEl.textContent = 'Complete';
+    } else {
+        etaEl.textContent = 'Calculating...';
+    }
+}
+
+// Update TCP/UDP status indicators
+function updateScanTypeStatus(data) {
+    // TCP Status
+    const tcpIcon = document.getElementById('tcp-icon');
+    const tcpStatus = document.getElementById('tcp-status');
+    const tcpCount = document.getElementById('tcp-count');
+
+    if (tcpIcon) {
+        tcpIcon.innerHTML = STATUS_ICONS[data.tcp_status] || STATUS_ICONS['not_started'];
+        tcpIcon.className = `scan-type-icon ${data.tcp_status || 'not_started'}`;
+    }
+    if (tcpStatus) {
+        tcpStatus.textContent = STATUS_TEXT[data.tcp_status] || STATUS_TEXT['not_started'];
+    }
+    if (tcpCount) {
+        tcpCount.textContent = `${data.tcp_ports_found || 0} ports`;
+    }
+
+    // UDP Status
+    const udpIcon = document.getElementById('udp-icon');
+    const udpStatus = document.getElementById('udp-status');
+    const udpCount = document.getElementById('udp-count');
+
+    if (udpIcon) {
+        udpIcon.innerHTML = STATUS_ICONS[data.udp_status] || STATUS_ICONS['not_started'];
+        udpIcon.className = `scan-type-icon ${data.udp_status || 'not_started'}`;
+    }
+    if (udpStatus) {
+        udpStatus.textContent = STATUS_TEXT[data.udp_status] || STATUS_TEXT['not_started'];
+    }
+    if (udpCount) {
+        udpCount.textContent = `${data.udp_ports_found || 0} ports`;
+    }
+}
+
+// Update activity log with new entries
+function updateActivityLog(entries) {
+    const logContainer = document.getElementById('activity-log');
+    if (!logContainer || !entries || !Array.isArray(entries)) return;
+
+    // Only add new entries (those after lastLogCount)
+    const newEntries = entries.slice(lastLogCount);
+    lastLogCount = entries.length;
+
+    newEntries.forEach(entry => {
+        const logEntry = document.createElement('div');
+        logEntry.className = `log-entry log-${entry.type || 'info'}`;
+
+        const timestamp = document.createElement('span');
+        timestamp.className = 'log-timestamp';
+        try {
+            const time = new Date(entry.ts);
+            timestamp.textContent = time.toLocaleTimeString();
+        } catch (e) {
+            timestamp.textContent = entry.ts || '';
+        }
+
+        const message = document.createElement('span');
+        message.className = 'log-message';
+        message.textContent = entry.msg || '';
+
+        logEntry.appendChild(timestamp);
+        logEntry.appendChild(message);
+        logContainer.appendChild(logEntry);
+    });
+
+    // Auto-scroll to bottom
+    logContainer.scrollTop = logContainer.scrollHeight;
+}
+
+// Toggle activity log visibility
+function toggleActivityLog() {
+    const logContainer = document.getElementById('activity-log');
+    const toggleBtn = document.getElementById('toggle-log');
+
+    if (!logContainer || !toggleBtn) return;
+
+    if (logContainer.classList.contains('collapsed')) {
+        logContainer.classList.remove('collapsed');
+        toggleBtn.innerHTML = '&#9660;';  // Down arrow
+    } else {
+        logContainer.classList.add('collapsed');
+        toggleBtn.innerHTML = '&#9654;';  // Right arrow
+    }
+}
+
+// Clean up scan progress state
+function cleanupScanProgress() {
+    if (elapsedTimerId) {
+        clearInterval(elapsedTimerId);
+        elapsedTimerId = null;
+    }
+    scanStartTime = null;
+    lastLogCount = 0;
+}
+
 // Update progress UI
 function updateProgressUI(data) {
     const progressDiv = document.getElementById('scan-progress');
     const phaseSpan = document.getElementById('progress-phase');
-    const portsSpan = document.getElementById('progress-ports');
     const progressFill = document.getElementById('progress-fill');
 
     if (!progressDiv) return;
@@ -26,11 +181,17 @@ function updateProgressUI(data) {
     // Show progress div
     progressDiv.classList.remove('hidden');
 
-    // Update phase text
-    phaseSpan.textContent = PHASE_NAMES[data.current_phase] || data.current_phase;
+    // Start elapsed time tracking if not started
+    if (data.started_at && !scanStartTime) {
+        scanStartTime = new Date(data.started_at).getTime();
+        elapsedTimerId = setInterval(updateElapsedTime, 1000);
+        updateElapsedTime(); // Initial update
+    }
 
-    // Update port counts
-    portsSpan.textContent = `TCP: ${data.tcp_ports_found || 0} | UDP: ${data.udp_ports_found || 0}`;
+    // Update phase text
+    if (phaseSpan) {
+        phaseSpan.textContent = PHASE_NAMES[data.current_phase] || data.current_phase;
+    }
 
     // Update progress bar based on phase
     const phaseProgress = {
@@ -40,7 +201,17 @@ function updateProgressUI(data) {
         'saving': 80,
         'completed': 100
     };
-    progressFill.style.width = (phaseProgress[data.current_phase] || 0) + '%';
+    if (progressFill) {
+        progressFill.style.width = (phaseProgress[data.current_phase] || 0) + '%';
+    }
+
+    // Update TCP/UDP status indicators
+    updateScanTypeStatus(data);
+
+    // Update activity log (only new entries)
+    if (data.activity_log) {
+        updateActivityLog(data.activity_log);
+    }
 }
 
 // Start SSE progress stream
@@ -48,6 +219,9 @@ function startProgressStream(scanId) {
     if (progressEventSource) {
         progressEventSource.close();
     }
+
+    // Reset state for new scan
+    cleanupScanProgress();
 
     progressEventSource = new EventSource(`/api/scans/${scanId}/progress`);
 
@@ -59,6 +233,7 @@ function startProgressStream(scanId) {
     progressEventSource.addEventListener('complete', (e) => {
         const data = JSON.parse(e.data);
         updateProgressUI(data);
+        cleanupScanProgress();
         progressEventSource.close();
         progressEventSource = null;
 
@@ -69,6 +244,7 @@ function startProgressStream(scanId) {
     });
 
     progressEventSource.addEventListener('error', (e) => {
+        cleanupScanProgress();
         progressEventSource.close();
         progressEventSource = null;
 

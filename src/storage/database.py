@@ -169,7 +169,14 @@ async def update_scan_progress(
 
 
 async def get_scan_progress(scan_id: str) -> Optional[Dict]:
-    """Get current scan progress for SSE streaming."""
+    """Get current scan progress for SSE streaming.
+
+    Returns scan progress including activity log and TCP/UDP status
+    from the in-memory activity log store.
+    """
+    # Import here to avoid circular imports
+    from src.scanner.activity_log import get_activity_log, get_scan_state
+
     async with await get_session() as session:
         result = await session.execute(
             select(Scan).where(Scan.scan_id == scan_id)
@@ -179,6 +186,10 @@ async def get_scan_progress(scan_id: str) -> Optional[Dict]:
         if not scan:
             return None
 
+        # Get in-memory state (TCP/UDP status and activity log)
+        scan_state = get_scan_state(scan_id)
+        activity_log = get_activity_log(scan_id)
+
         return {
             "scan_id": scan.scan_id,
             "status": scan.status,
@@ -186,6 +197,15 @@ async def get_scan_progress(scan_id: str) -> Optional[Dict]:
             "tcp_ports_found": scan.tcp_ports_found or 0,
             "udp_ports_found": scan.udp_ports_found or 0,
             "host_status": scan.host_status,
+            # New fields for enhanced progress tracking
+            "started_at": scan.started_at.isoformat() + "Z" if scan.started_at else None,
+            "tcp_status": scan_state.get("tcp_status", "not_started"),
+            "udp_status": scan_state.get("udp_status", "not_started"),
+            "tcp_started_at": scan_state.get("tcp_started_at"),
+            "tcp_completed_at": scan_state.get("tcp_completed_at"),
+            "udp_started_at": scan_state.get("udp_started_at"),
+            "udp_completed_at": scan_state.get("udp_completed_at"),
+            "activity_log": activity_log,
         }
 
 

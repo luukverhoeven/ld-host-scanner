@@ -105,12 +105,49 @@
 
                 <!-- Scan Progress (hidden by default) -->
                 <div id="scan-progress" class="scan-progress hidden">
+                    <!-- Time Display -->
+                    <div class="scan-time-info">
+                        <span class="elapsed-time">
+                            <strong>Elapsed:</strong> <span id="elapsed-time">00:00</span>
+                        </span>
+                        <span class="eta-time">
+                            <strong>ETA:</strong> <span id="eta-time">Calculating...</span>
+                        </span>
+                    </div>
+
+                    <!-- TCP/UDP Status Grid -->
+                    <div class="scan-type-status">
+                        <div class="scan-type tcp-scan">
+                            <span class="scan-type-icon" id="tcp-icon">&#9675;</span>
+                            <span class="scan-type-label">TCP</span>
+                            <span class="scan-type-progress" id="tcp-status">Waiting...</span>
+                            <span class="scan-type-count" id="tcp-count">0 ports</span>
+                        </div>
+                        <div class="scan-type udp-scan">
+                            <span class="scan-type-icon" id="udp-icon">&#9675;</span>
+                            <span class="scan-type-label">UDP</span>
+                            <span class="scan-type-progress" id="udp-status">Waiting...</span>
+                            <span class="scan-type-count" id="udp-count">0 ports</span>
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar -->
                     <div class="progress-bar">
                         <div class="progress-fill" id="progress-fill"></div>
                     </div>
                     <div class="progress-info">
                         <span id="progress-phase">Starting scan...</span>
-                        <span id="progress-ports">TCP: 0 | UDP: 0</span>
+                    </div>
+
+                    <!-- Activity Log -->
+                    <div class="activity-log-container">
+                        <div class="activity-log-header">
+                            <span>Activity Log</span>
+                            <button class="btn-toggle-log" id="toggle-log" onclick="toggleActivityLog()">&#9660;</button>
+                        </div>
+                        <div class="activity-log" id="activity-log">
+                            <!-- Log entries will be added here dynamically -->
+                        </div>
                     </div>
                 </div>
             </div>

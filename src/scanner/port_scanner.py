@@ -12,6 +12,13 @@ import nmap
 
 from src.config import settings
 from src.scanner.services import get_common_service_name
+from src.scanner.activity_log import (
+    init_scan_state,
+    add_log_entry,
+    add_log_entry_sync,
+    update_scan_state,
+    delayed_cleanup,
+)
 from src.storage.database import (
     save_scan,
     save_ports,
@@ -755,6 +762,11 @@ async def run_full_scan() -> Optional[str]:
     scanner = PortScanner()
 
     try:
+        # Initialize activity log and scan state
+        await init_scan_state(scan_id)
+        await add_log_entry(scan_id, "Scan initiated", "info")
+        await add_log_entry(scan_id, f"Target: {target}", "info")
+
         # Save scan as running with initial phase
         await save_scan(scan_id, target, "full", started_at, "running")
         await update_scan_progress(scan_id, "starting", 0, 0)
@@ -763,17 +775,31 @@ async def run_full_scan() -> Optional[str]:
         # Rustscan is much faster than nmap for TCP port discovery
         await update_scan_progress(scan_id, "scanning", 0, 0)
 
-        tcp_task = asyncio.to_thread(
-            scanner.scan_tcp_rustscan, target, "1-65535"
-        )
+        # Update state and log before TCP scan
+        await update_scan_state(scan_id, tcp_status="in_progress", tcp_started_at=datetime.utcnow())
+        await add_log_entry(scan_id, "Starting TCP scan with Rustscan (ports 1-65535)", "info")
 
-        # UDP scan uses nmap (top 1000 ports - UDP is inherently slow)
-        udp_task = asyncio.to_thread(
-            scanner.scan_udp, target
-        )
+        # Update state and log before UDP scan
+        await update_scan_state(scan_id, udp_status="in_progress", udp_started_at=datetime.utcnow())
+        await add_log_entry(scan_id, f"Starting UDP scan with nmap (top {settings.udp_top_ports} ports)", "info")
+
+        # Wrapper functions to capture individual scan completion
+        async def run_tcp_scan():
+            result = await asyncio.to_thread(scanner.scan_tcp_rustscan, target, "1-65535")
+            tcp_count = len(result.get("ports", []))
+            await update_scan_state(scan_id, tcp_status="completed", tcp_completed_at=datetime.utcnow())
+            await add_log_entry(scan_id, f"TCP scan completed: found {tcp_count} open ports", "success")
+            return result
+
+        async def run_udp_scan():
+            result = await asyncio.to_thread(scanner.scan_udp, target)
+            udp_count = len(result.get("ports", []))
+            await update_scan_state(scan_id, udp_status="completed", udp_completed_at=datetime.utcnow())
+            await add_log_entry(scan_id, f"UDP scan completed: found {udp_count} open ports", "success")
+            return result
 
         # Execute both scans concurrently
-        tcp_results, udp_results = await asyncio.gather(tcp_task, udp_task)
+        tcp_results, udp_results = await asyncio.gather(run_tcp_scan(), run_udp_scan())
 
         # Update progress with port counts
         tcp_port_count = len(tcp_results.get("ports", []))
@@ -782,6 +808,7 @@ async def run_full_scan() -> Optional[str]:
 
         # Optional: Enrich TCP service/version info after fast Rustscan discovery.
         if settings.tcp_service_enrichment and tcp_results.get("ports"):
+            await add_log_entry(scan_id, f"Detecting services on {tcp_port_count} TCP ports...", "info")
             discovered_tcp_ports = [p["port"] for p in tcp_results["ports"]]
             try:
                 enrichment_map = await asyncio.to_thread(
@@ -796,8 +823,10 @@ async def run_full_scan() -> Optional[str]:
                         continue
                     port_entry["service"] = enriched.get("service", port_entry.get("service"))
                     port_entry["version"] = enriched.get("version", port_entry.get("version"))
+                await add_log_entry(scan_id, "Service detection completed", "success")
             except Exception as e:
                 logger.warning("TCP service enrichment failed: %s", e)
+                await add_log_entry(scan_id, f"Service detection failed: {e}", "warning")
 
         # Combine results
         all_ports = tcp_results["ports"] + udp_results["ports"]
@@ -812,12 +841,15 @@ async def run_full_scan() -> Optional[str]:
         tcp_port_count = len(tcp_results.get("ports", []))
         udp_port_count = len(udp_results.get("ports", []))
         await update_scan_progress(scan_id, "saving", tcp_port_count, udp_port_count)
+        await add_log_entry(scan_id, "Saving results to database...", "info")
 
         # Save ports to database
         await save_ports(scan_id, all_ports)
 
         # Detect changes from previous scan
         changes = await detect_changes(scan_id, target)
+        if changes:
+            await add_log_entry(scan_id, f"Detected {len(changes)} port changes", "warning")
 
         # Update scan status
         await save_scan(
@@ -893,11 +925,25 @@ async def run_full_scan() -> Optional[str]:
             len(changes),
         )
 
+        # Add completion log entry
+        await add_log_entry(
+            scan_id,
+            f"Scan completed in {duration:.1f}s - {len(all_ports)} ports found",
+            "success"
+        )
+
+        # Schedule cleanup of activity log data after 60 seconds
+        asyncio.create_task(delayed_cleanup(scan_id, delay=60))
+
         return scan_id
 
     except Exception as e:
         logger.exception("Scan %s failed: %s", scan_id, e)
         scans_total.labels(status="failed", target=target).inc()
+
+        # Log the error
+        await add_log_entry(scan_id, f"Scan failed: {e}", "error")
+
         await save_scan(
             scan_id,
             target,
@@ -907,6 +953,10 @@ async def run_full_scan() -> Optional[str]:
             error_message=f"{type(e).__name__}: {str(e)}",
             completed_at=datetime.utcnow(),
         )
+
+        # Schedule cleanup even on failure
+        asyncio.create_task(delayed_cleanup(scan_id, delay=60))
+
         return None
 
 
