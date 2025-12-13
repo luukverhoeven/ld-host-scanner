@@ -1,15 +1,15 @@
 # Core dependencies
 python-nmap~=0.7.1
-icmplib~=3.0.0
+icmplib~=3.0.4
 fastapi~=0.109.0
 uvicorn[standard]~=0.27.0
 
 # Scheduling
-apscheduler~=3.10.4
+apscheduler~=3.11.1
 
 # Database
 sqlalchemy~=2.0.0
-aiosqlite~=0.19.0
+aiosqlite~=0.21.0
 
 # Templating
 jinja2~=3.1.0
@@ -28,10 +28,10 @@ pydantic-settings~=2.1.0
 cryptography~=42.0.0
 
 # Form handling
-python-multipart~=0.0.6
+python-multipart~=0.0.20
 
 # Observability
-prometheus-client~=0.19.0
+prometheus-client~=0.23.1
 python-json-logger~=2.0.7
 
 # Server-Sent Events
