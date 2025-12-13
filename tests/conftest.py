@@ -1,12 +1,16 @@
 """Shared pytest fixtures."""
 
 import os
+from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, patch
 
 # Set test environment before importing app modules
-os.environ["TARGET_HOST"] = "test.example.com"
-os.environ["DATA_DIR"] = "/tmp/test_data"
+os.environ.setdefault("TARGET_HOST", "test.example.com")
+os.environ.setdefault(
+    "DATA_DIR",
+    str(Path(__file__).resolve().parents[1] / "data" / "test_data"),
+)
 
 
 @pytest.fixture

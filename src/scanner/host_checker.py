@@ -20,7 +20,7 @@ async def check_host_dns(target: str) -> Optional[str]:
         IP address if resolved, None otherwise.
     """
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.getaddrinfo(
             target,
             None,

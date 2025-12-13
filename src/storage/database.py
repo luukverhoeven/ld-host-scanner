@@ -2,10 +2,11 @@
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from sqlalchemy import select, desc
+from sqlalchemy import desc, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from src.config import settings, to_local_iso
@@ -211,19 +212,26 @@ async def get_scan_progress(scan_id: str) -> Optional[Dict]:
 
 async def save_ports(scan_id: str, ports: List[Dict]) -> None:
     """Save discovered ports for a scan."""
+    if not ports:
+        return
+
     async with await get_session() as session:
-        for port_data in ports:
-            port = Port(
-                scan_id=scan_id,
-                port=port_data["port"],
-                protocol=port_data["protocol"],
-                state=port_data["state"],
-                service=port_data.get("service"),
-                version=port_data.get("version"),
-                common_service=port_data.get("common_service"),
-                is_stealth=port_data.get("is_stealth", False),
-            )
-            session.add(port)
+        now = datetime.utcnow()
+        rows = [
+            {
+                "scan_id": scan_id,
+                "port": port_data["port"],
+                "protocol": port_data["protocol"],
+                "state": port_data["state"],
+                "service": port_data.get("service"),
+                "version": port_data.get("version"),
+                "common_service": port_data.get("common_service"),
+                "is_stealth": port_data.get("is_stealth", False),
+                "created_at": now,
+            }
+            for port_data in ports
+        ]
+        await session.execute(insert(Port), rows)
         await session.commit()
 
 
@@ -318,15 +326,24 @@ async def get_recent_scans(limit: int = 20, offset: int = 0) -> List[Dict]:
         )
         scans = result.scalars().all()
 
+        if not scans:
+            return []
+
+        scan_ids = [scan.scan_id for scan in scans]
+
+        ports_by_scan: Dict[str, List[Port]] = defaultdict(list)
+        ports_result = await session.execute(
+            select(Port)
+            .where(Port.scan_id.in_(scan_ids))
+            .where(Port.state == "open")
+            .order_by(Port.port.asc(), Port.protocol.asc())
+        )
+        for port in ports_result.scalars().all():
+            ports_by_scan[port.scan_id].append(port)
+
         scan_list = []
         for scan in scans:
-            # Get ports for this scan
-            ports_result = await session.execute(
-                select(Port)
-                .where(Port.scan_id == scan.scan_id)
-                .where(Port.state == "open")
-            )
-            ports = ports_result.scalars().all()
+            ports = ports_by_scan.get(scan.scan_id, [])
 
             scan_list.append({
                 "scan_id": scan.scan_id,
@@ -851,19 +868,23 @@ async def get_port_count_history(target: str, limit: int = 30) -> List[Dict]:
         )
         scans = scans_result.scalars().all()
 
+        if not scans:
+            return []
+
+        scan_ids = [scan.scan_id for scan in scans]
+        counts_result = await session.execute(
+            select(Port.scan_id, func.count(Port.id))
+            .where(Port.scan_id.in_(scan_ids))
+            .where(Port.state == "open")
+            .group_by(Port.scan_id)
+        )
+        open_counts = {scan_id: count for scan_id, count in counts_result.all()}
+
         history = []
         for scan in scans:
-            # Count open ports for this scan
-            ports_result = await session.execute(
-                select(Port)
-                .where(Port.scan_id == scan.scan_id)
-                .where(Port.state == "open")
-            )
-            open_ports = ports_result.scalars().all()
-
             history.append({
                 "completed_at": to_local_iso(scan.completed_at),
-                "open_port_count": len(open_ports),
+                "open_port_count": int(open_counts.get(scan.scan_id, 0)),
                 "host_status": scan.host_status,
             })
 

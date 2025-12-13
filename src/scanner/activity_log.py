@@ -6,21 +6,29 @@ automatically cleaned up after scan completion.
 """
 
 import asyncio
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any, Deque, Dict, List, Optional
+
+# Maximum log entries to keep per scan (prevents memory bloat)
+MAX_LOG_ENTRIES = 100
+
+# Maximum discovered ports to keep per scan
+MAX_DISCOVERED_PORTS = 500
 
 # In-memory storage for activity logs (keyed by scan_id)
-_activity_logs: Dict[str, List[Dict]] = defaultdict(list)
+_activity_logs: Dict[str, Deque[Dict[str, str]]] = defaultdict(
+    lambda: deque(maxlen=MAX_LOG_ENTRIES)
+)
 
 # In-memory storage for scan state (TCP/UDP status)
 _scan_states: Dict[str, Dict[str, Any]] = {}
 
+# In-memory storage for discovered ports (keyed by scan_id)
+_discovered_ports: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
 # Locks for thread-safe access
 _locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-
-# Maximum log entries to keep per scan (prevents memory bloat)
-MAX_LOG_ENTRIES = 100
 
 
 def _get_lock(scan_id: str) -> asyncio.Lock:
@@ -50,10 +58,6 @@ async def add_log_entry(
         }
         _activity_logs[scan_id].append(entry)
 
-        # Trim old entries if over limit
-        if len(_activity_logs[scan_id]) > MAX_LOG_ENTRIES:
-            _activity_logs[scan_id] = _activity_logs[scan_id][-MAX_LOG_ENTRIES:]
-
 
 def add_log_entry_sync(
     scan_id: str,
@@ -74,10 +78,6 @@ def add_log_entry_sync(
     }
     _activity_logs[scan_id].append(entry)
 
-    # Trim old entries if over limit
-    if len(_activity_logs[scan_id]) > MAX_LOG_ENTRIES:
-        _activity_logs[scan_id] = _activity_logs[scan_id][-MAX_LOG_ENTRIES:]
-
 
 def get_activity_log(scan_id: str) -> List[Dict]:
     """Get all activity log entries for the given scan.
@@ -88,14 +88,18 @@ def get_activity_log(scan_id: str) -> List[Dict]:
     Returns:
         List of log entries with ts, msg, and type fields.
     """
-    return list(_activity_logs.get(scan_id, []))
+    return list(_activity_logs.get(scan_id, ()))
 
 
-async def init_scan_state(scan_id: str) -> None:
+async def init_scan_state(
+    scan_id: str,
+    trigger_source: Optional[str] = None
+) -> None:
     """Initialize scan state for a new scan.
 
     Args:
         scan_id: The scan identifier.
+        trigger_source: How the scan was triggered - 'manual' or 'scheduled'.
     """
     async with _get_lock(scan_id):
         _scan_states[scan_id] = {
@@ -105,8 +109,12 @@ async def init_scan_state(scan_id: str) -> None:
             "tcp_completed_at": None,
             "udp_started_at": None,
             "udp_completed_at": None,
+            "trigger_source": trigger_source,
+            "current_sub_phase": None,
+            "enrichment_progress": {"done": 0, "total": 0},
         }
-        _activity_logs[scan_id] = []
+        _activity_logs[scan_id] = deque(maxlen=MAX_LOG_ENTRIES)
+        _discovered_ports[scan_id] = []
 
 
 async def update_scan_state(scan_id: str, **kwargs) -> None:

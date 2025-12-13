@@ -1,6 +1,7 @@
 """Job scheduler using APScheduler."""
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -95,11 +96,12 @@ def start_scheduler() -> None:
     scheduler.add_job(
         run_full_scan,
         trigger="date",
+        run_date=datetime.now(timezone.utc) + timedelta(seconds=30),
         id="initial_scan",
         name="Initial Scan on Startup",
         replace_existing=True,
     )
-    logger.info("Scheduled initial scan on startup")
+    logger.info("Scheduled initial scan on startup (30s delay)")
 
     # Start the scheduler
     scheduler.start()
