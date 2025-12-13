@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import socket
-from typing import Optional
+from typing import List, Optional
 
 from src.config import settings
 
@@ -81,7 +81,7 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
 
     Tries multiple methods to determine if host is reachable:
     1. DNS resolution
-    2. TCP connect to common ports (443, 80, 22)
+    2. TCP connect to ports discovered in last scan (or fallback to common ports)
 
     Args:
         target: Hostname or IP to check. Defaults to configured target.
@@ -89,6 +89,9 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
     Returns:
         Dictionary with check results.
     """
+    # Import here to avoid circular imports
+    from src.storage.database import get_open_ports_from_last_scan
+
     if target is None:
         target = settings.target_host
 
@@ -106,9 +109,24 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
         result["dns_resolved"] = True
         result["ip_address"] = ip
 
-    # Try TCP connect to common ports
+    # Get ports from last successful scan, fallback to common ports
+    discovered_ports = await get_open_ports_from_last_scan(target)
     common_ports = [443, 80, 22, 8080]
+
+    # Prioritize discovered ports, then add common ports as fallback
+    # Use set to avoid duplicates, limit to 8 ports for speed
+    ports_to_check: List[int] = []
+    for port in discovered_ports[:5]:
+        if port not in ports_to_check:
+            ports_to_check.append(port)
     for port in common_ports:
+        if port not in ports_to_check and len(ports_to_check) < 8:
+            ports_to_check.append(port)
+
+    logger.debug("Quick check ports for %s: %s", target, ports_to_check)
+
+    # Try TCP connect to ports
+    for port in ports_to_check:
         if await check_host_tcp_connect(target, port):
             result["tcp_reachable"] = True
             break
@@ -122,11 +140,12 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
         result["status"] = "offline"
 
     logger.info(
-        "Quick check for %s: %s (DNS: %s, TCP: %s)",
+        "Quick check for %s: %s (DNS: %s, TCP: %s, ports: %s)",
         target,
         result["status"],
         result["dns_resolved"],
         result["tcp_reachable"],
+        ports_to_check[:3],  # Log first 3 ports checked
     )
 
     return result

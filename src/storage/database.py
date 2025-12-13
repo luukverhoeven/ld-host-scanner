@@ -653,3 +653,40 @@ async def get_port_count_history(target: str, limit: int = 30) -> List[Dict]:
         # Reverse to get chronological order (oldest first)
         history.reverse()
         return history
+
+
+async def get_open_ports_from_last_scan(target: str) -> List[int]:
+    """Get list of open TCP ports from the last completed scan.
+
+    Used by quick_host_check to probe known-open ports instead of hardcoded ones.
+
+    Args:
+        target: Target hostname.
+
+    Returns:
+        List of port numbers that were open in the last scan.
+    """
+    async with await get_session() as session:
+        # Get the latest completed scan
+        scan_result = await session.execute(
+            select(Scan)
+            .where(Scan.target == target)
+            .where(Scan.status == "completed")
+            .order_by(desc(Scan.completed_at))
+            .limit(1)
+        )
+        scan = scan_result.scalar_one_or_none()
+
+        if not scan:
+            return []
+
+        # Get open TCP ports from this scan
+        ports_result = await session.execute(
+            select(Port)
+            .where(Port.scan_id == scan.scan_id)
+            .where(Port.state == "open")
+            .where(Port.protocol == "tcp")
+        )
+        ports = ports_result.scalars().all()
+
+        return [p.port for p in ports]
