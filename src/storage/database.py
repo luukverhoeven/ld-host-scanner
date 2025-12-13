@@ -41,7 +41,35 @@ async def init_database() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # Run migrations for schema updates
+    await run_migrations()
+
     logger.info("Database initialized at %s", settings.data_dir / "scanner.db")
+
+
+async def run_migrations() -> None:
+    """Run database migrations to add missing columns."""
+    from sqlalchemy import text
+
+    migrations = [
+        # Add common_service column to ports table
+        ("ports", "common_service", "ALTER TABLE ports ADD COLUMN common_service VARCHAR(50)"),
+        # Add failure_count column to host_status table
+        ("host_status", "failure_count", "ALTER TABLE host_status ADD COLUMN failure_count INTEGER DEFAULT 0"),
+    ]
+
+    async with engine.begin() as conn:
+        for table, column, sql in migrations:
+            # Check if column exists
+            result = await conn.execute(text(f"PRAGMA table_info({table})"))
+            columns = [row[1] for row in result.fetchall()]
+
+            if column not in columns:
+                try:
+                    await conn.execute(text(sql))
+                    logger.info("Migration: Added column %s.%s", table, column)
+                except Exception as e:
+                    logger.warning("Migration failed for %s.%s: %s", table, column, e)
 
 
 async def get_session() -> AsyncSession:
@@ -190,12 +218,13 @@ async def detect_changes(scan_id: str, target: str) -> List[Dict]:
         return changes
 
 
-async def get_recent_scans(limit: int = 20) -> List[Dict]:
+async def get_recent_scans(limit: int = 20, offset: int = 0) -> List[Dict]:
     """Get recent scan results with ports."""
     async with await get_session() as session:
         result = await session.execute(
             select(Scan)
             .order_by(desc(Scan.started_at))
+            .offset(offset)
             .limit(limit)
         )
         scans = result.scalars().all()

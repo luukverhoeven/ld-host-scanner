@@ -86,12 +86,7 @@ class PortRescanResponse(BaseModel):
 @router.get("/scans", response_model=List[ScanResponse])
 async def list_scans(limit: int = 20, offset: int = 0):
     """Get list of recent scans."""
-    scans = await get_recent_scans(limit=limit)
-
-    # Apply offset
-    if offset > 0:
-        scans = scans[offset:]
-
+    scans = await get_recent_scans(limit=limit, offset=offset)
     return scans
 
 

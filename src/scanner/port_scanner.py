@@ -154,7 +154,18 @@ class PortScanner:
             # -sn: Ping scan (no port scan)
             # -PE: ICMP echo request
             self.nm.scan(hosts=target, arguments="-sn -PE")
-            return target in self.nm.all_hosts()
+
+            # Direct match (works for IPs)
+            if target in self.nm.all_hosts():
+                return True
+
+            # Fallback: check if target matches any host's hostname
+            # (nmap stores resolved IP as key, hostname as attribute)
+            for host in self.nm.all_hosts():
+                if self.nm[host].hostname() == target:
+                    return True
+
+            return False
         except nmap.PortScannerError as e:
             logger.error("Host check failed: %s", e)
             return False
@@ -569,7 +580,12 @@ async def run_full_scan() -> Optional[str]:
 
         # Combine results
         all_ports = tcp_results["ports"] + udp_results["ports"]
-        host_status = tcp_results["host_status"]
+
+        # Determine host status from both protocols
+        # Host is "up" if either scan reports it up, or if either found open ports
+        tcp_up = tcp_results["host_status"] == "up" or len(tcp_results["ports"]) > 0
+        udp_up = udp_results["host_status"] == "up" or len(udp_results["ports"]) > 0
+        host_status = "up" if (tcp_up or udp_up) else "down"
 
         # Save ports to database
         await save_ports(scan_id, all_ports)
@@ -608,8 +624,8 @@ async def run_full_scan() -> Optional[str]:
         # Record successful scan metric
         scans_total.labels(status="completed", target=target).inc()
 
-        # Send notifications if any open ports or changes detected
-        if all_ports or changes:
+        # Send notifications only when port changes are detected
+        if changes:
             await send_notifications(scan_id, target, all_ports, changes, host_status)
 
         # Check expected ports (only if configured)
