@@ -801,3 +801,238 @@ async def test_send_email_alert_no_changes(monkeypatch):
     message = call_args.args[0]
     # Check subject includes port count
     assert "2 open ports" in message["Subject"]
+
+
+# Slack Webhook Tests
+
+@pytest.mark.asyncio
+async def test_webhook_uses_slack_format_when_slack_url(monkeypatch):
+    """Test webhook uses Slack payload format for Slack URLs."""
+    from src.notifications import webhook_notifier
+
+    monkeypatch.setattr(webhook_notifier, "settings", SimpleNamespace(
+        webhook_configured=True,
+        webhook_url="https://hooks.slack.com/services/abc/def",
+    ))
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(return_value=response)
+
+    with patch.object(webhook_notifier.httpx, "AsyncClient", return_value=client), \
+         patch.object(webhook_notifier, "save_notification", new=AsyncMock()):
+        ok = await webhook_notifier.send_webhook_alert(
+            scan_id="scan-1",
+            target="example.com",
+            ports=[{"port": 80, "protocol": "tcp", "service": "http"}],
+            changes=[],
+            host_status="up",
+        )
+
+    assert ok is True
+    # Verify Slack format was used (attachments, not embeds)
+    call_args = client.post.call_args
+    payload = call_args.kwargs.get("json", {})
+    assert "attachments" in payload
+    assert "embeds" not in payload
+
+
+@pytest.mark.asyncio
+async def test_host_offline_webhook_uses_slack_format(monkeypatch):
+    """Test host offline webhook uses Slack format for Slack URLs."""
+    from src.notifications import webhook_notifier
+
+    monkeypatch.setattr(webhook_notifier, "settings", SimpleNamespace(
+        webhook_configured=True,
+        webhook_url="https://hooks.slack.com/services/abc/def",
+    ))
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(return_value=response)
+
+    with patch.object(webhook_notifier.httpx, "AsyncClient", return_value=client), \
+         patch.object(webhook_notifier, "save_notification", new=AsyncMock()):
+        ok = await webhook_notifier.send_host_offline_webhook("example.com")
+
+    assert ok is True
+    # Verify Slack format was used
+    call_args = client.post.call_args
+    payload = call_args.kwargs.get("json", {})
+    assert "attachments" in payload
+
+
+@pytest.mark.asyncio
+async def test_host_offline_webhook_exception_handling(monkeypatch):
+    """Test host offline webhook handles exceptions gracefully."""
+    from src.notifications import webhook_notifier
+
+    monkeypatch.setattr(webhook_notifier, "settings", SimpleNamespace(
+        webhook_configured=True,
+        webhook_url="https://discord.com/api/webhooks/abc",
+    ))
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(side_effect=ConnectionError("Network error"))
+
+    with patch.object(webhook_notifier.httpx, "AsyncClient", return_value=client), \
+         patch.object(webhook_notifier, "save_notification", new=AsyncMock()) as save_mock:
+        ok = await webhook_notifier.send_host_offline_webhook("example.com")
+
+    assert ok is False
+    save_mock.assert_awaited()
+    assert save_mock.await_args.kwargs["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_missing_ports_webhook_uses_slack_format(monkeypatch):
+    """Test missing ports webhook uses Slack format for Slack URLs."""
+    from src.notifications import webhook_notifier
+
+    monkeypatch.setattr(webhook_notifier, "settings", SimpleNamespace(
+        webhook_configured=True,
+        webhook_url="https://hooks.slack.com/services/abc/def",
+    ))
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(return_value=response)
+
+    with patch.object(webhook_notifier.httpx, "AsyncClient", return_value=client), \
+         patch.object(webhook_notifier, "save_notification", new=AsyncMock()):
+        ok = await webhook_notifier.send_missing_ports_webhook(
+            "example.com",
+            [{"port": 80, "protocol": "tcp"}, {"port": 443, "protocol": "tcp"}]
+        )
+
+    assert ok is True
+    # Verify Slack format was used
+    call_args = client.post.call_args
+    payload = call_args.kwargs.get("json", {})
+    assert "attachments" in payload
+
+
+@pytest.mark.asyncio
+async def test_missing_ports_webhook_exception_handling(monkeypatch):
+    """Test missing ports webhook handles exceptions gracefully."""
+    from src.notifications import webhook_notifier
+
+    monkeypatch.setattr(webhook_notifier, "settings", SimpleNamespace(
+        webhook_configured=True,
+        webhook_url="https://discord.com/api/webhooks/abc",
+    ))
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(side_effect=ConnectionError("Network error"))
+
+    with patch.object(webhook_notifier.httpx, "AsyncClient", return_value=client), \
+         patch.object(webhook_notifier, "save_notification", new=AsyncMock()) as save_mock:
+        ok = await webhook_notifier.send_missing_ports_webhook(
+            "example.com",
+            [{"port": 80, "protocol": "tcp"}]
+        )
+
+    assert ok is False
+    save_mock.assert_awaited()
+    assert save_mock.await_args.kwargs["status"] == "failed"
+
+
+# Notifier Orchestration Edge Cases
+
+@pytest.mark.asyncio
+async def test_notifier_host_offline_both_fail_updates_metrics(monkeypatch):
+    """Test host offline notification with both channels failing."""
+    from src.notifications import notifier
+
+    sent = MagicMock()
+    failed = MagicMock()
+    sent.labels.return_value.inc = MagicMock()
+    failed.labels.return_value.inc = MagicMock()
+    monkeypatch.setattr(notifier, "notifications_sent_total", sent)
+    monkeypatch.setattr(notifier, "notifications_failed_total", failed)
+
+    with patch.object(notifier, "send_host_offline_email", new=AsyncMock(return_value=False)), \
+         patch.object(notifier, "send_host_offline_webhook", new=AsyncMock(return_value=False)):
+        await notifier.send_host_status_notification("example.com", "offline")
+
+    # Both channels failed
+    assert failed.labels.return_value.inc.call_count == 2
+    assert sent.labels.return_value.inc.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_notifier_host_online_logs_status(monkeypatch):
+    """Test host status notification for online status just logs."""
+    from src.notifications import notifier
+
+    with patch.object(notifier, "send_host_offline_email", new=AsyncMock()) as email_mock, \
+         patch.object(notifier, "send_host_offline_webhook", new=AsyncMock()) as webhook_mock:
+        await notifier.send_host_status_notification("example.com", "online")
+
+    # Should not send any alerts for online status
+    email_mock.assert_not_awaited()
+    webhook_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notifier_missing_ports_both_fail_updates_metrics(monkeypatch):
+    """Test missing ports notification with both channels failing."""
+    from src.notifications import notifier
+
+    sent = MagicMock()
+    failed = MagicMock()
+    sent.labels.return_value.inc = MagicMock()
+    failed.labels.return_value.inc = MagicMock()
+    monkeypatch.setattr(notifier, "notifications_sent_total", sent)
+    monkeypatch.setattr(notifier, "notifications_failed_total", failed)
+
+    with patch.object(notifier, "send_missing_ports_email", new=AsyncMock(return_value=False)), \
+         patch.object(notifier, "send_missing_ports_webhook", new=AsyncMock(return_value=False)):
+        await notifier.send_missing_ports_notification(
+            "example.com",
+            [{"port": 80, "protocol": "tcp"}]
+        )
+
+    # Both channels failed
+    assert failed.labels.return_value.inc.call_count == 2
+    assert sent.labels.return_value.inc.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_notifier_missing_ports_both_succeed_updates_metrics(monkeypatch):
+    """Test missing ports notification with both channels succeeding."""
+    from src.notifications import notifier
+
+    sent = MagicMock()
+    failed = MagicMock()
+    sent.labels.return_value.inc = MagicMock()
+    failed.labels.return_value.inc = MagicMock()
+    monkeypatch.setattr(notifier, "notifications_sent_total", sent)
+    monkeypatch.setattr(notifier, "notifications_failed_total", failed)
+
+    with patch.object(notifier, "send_missing_ports_email", new=AsyncMock(return_value=True)), \
+         patch.object(notifier, "send_missing_ports_webhook", new=AsyncMock(return_value=True)):
+        await notifier.send_missing_ports_notification(
+            "example.com",
+            [{"port": 80, "protocol": "tcp"}, {"port": 443, "protocol": "tcp"}]
+        )
+
+    # Both channels succeeded
+    assert sent.labels.return_value.inc.call_count == 2
+    assert failed.labels.return_value.inc.call_count == 0

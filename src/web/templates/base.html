@@ -5,18 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Security Scanner{% endblock %}</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     {% block head %}{% endblock %}
 </head>
 <body data-timezone="{{ timezone|default('UTC') }}">
     <nav class="navbar">
-        <div class="nav-brand">
-            <span class="nav-icon">&#128274;</span>
-            Security Scanner
-        </div>
+        <a href="/" class="nav-brand">
+            <span class="nav-logo">
+                <i data-lucide="refresh-cw"></i>
+            </span>
+            <div class="nav-title">
+                <span>Security Scanner</span>
+                <small>Network Monitoring System</small>
+            </div>
+        </a>
         <div class="nav-links">
-            <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Dashboard</a>
-            <a href="/history" class="{% if request.url.path == '/history' %}active{% endif %}">History</a>
-            <a href="/docs" target="_blank">API Docs</a>
+            <a href="/" class="nav-pill {% if request.url.path == '/' %}active{% endif %}">
+                <i data-lucide="layout-dashboard"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/history" class="nav-pill {% if request.url.path == '/history' %}active{% endif %}">
+                <i data-lucide="clock"></i>
+                <span>History</span>
+            </a>
+            <a href="/docs" target="_blank" class="nav-pill">
+                <i data-lucide="file-text"></i>
+                <span>API Docs</span>
+            </a>
         </div>
     </nav>
 
@@ -30,6 +45,11 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/static/js/dashboard.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            lucide.createIcons();
+        });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

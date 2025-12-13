@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from sqlalchemy import desc, func, insert, select
+from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from src.config import settings, to_local_iso
@@ -339,9 +340,10 @@ async def detect_changes(scan_id: str, target: str) -> List[Dict]:
 async def get_recent_scans(limit: int = 20, offset: int = 0) -> List[Dict]:
     """Get recent scan results with ports."""
     async with await get_session() as session:
+        # Sort by most recent activity: completed_at for finished scans, started_at for running
         result = await session.execute(
             select(Scan)
-            .order_by(desc(Scan.started_at))
+            .order_by(desc(coalesce(Scan.completed_at, Scan.started_at)))
             .offset(offset)
             .limit(limit)
         )

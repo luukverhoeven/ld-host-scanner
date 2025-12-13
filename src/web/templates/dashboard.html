@@ -4,281 +4,375 @@
 
 {% block content %}
 <div class="dashboard">
+    <!-- Dashboard Header -->
     <div class="dashboard-header">
         <h1>Network Security Dashboard</h1>
-        <p class="target-info">Monitoring: <code>{{ target }}</code></p>
-    </div>
-
-    <div class="card-grid">
-        <!-- Status Card -->
-        <div class="card status-card">
-            <div class="card-header">
-                <h2>Host Status</h2>
-            </div>
-            <div class="card-body">
-                {% if status %}
-                <div class="status-indicator {{ status.host_status or 'unknown' }}">
-                    <span class="status-dot"></span>
-                    <span class="status-text">{{ (status.host_status or 'unknown')|upper }}</span>
-                </div>
-                <div class="status-details">
-                    <p><strong>Open Ports:</strong> {{ status.open_port_count }}</p>
-                    <p><strong>Last Scan:</strong>
-                        {% if status.last_scan %}
-                        <span class="timestamp" data-time="{{ status.last_scan }}">{{ status.last_scan }}</span>
-                        {% else %}
-                        Never
-                        {% endif %}
-                    </p>
-                </div>
-                {% else %}
-                <div class="status-indicator unknown">
-                    <span class="status-dot"></span>
-                    <span class="status-text">NO DATA</span>
-                </div>
-                <p>No scan results available yet.</p>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- Expected Ports Card (only shown if configured) -->
-        {% if expected_ports_status %}
-        <div class="card expected-ports-card">
-            <div class="card-header">
-                <h2>Expected Ports</h2>
-            </div>
-            <div class="card-body">
-                {% if expected_ports_status.last_check %}
-                <div class="status-indicator {{ 'up' if expected_ports_status.all_open else 'down' }}">
-                    <span class="status-dot"></span>
-                    <span class="status-text">
-                        {% if expected_ports_status.all_open %}
-                        ALL OPEN
-                        {% else %}
-                        {{ expected_ports_status.missing_ports|length }} MISSING
-                        {% endif %}
-                    </span>
-                </div>
-                <div class="expected-ports-details">
-                    {% if expected_ports_status.missing_ports %}
-                    <div class="missing-ports-alert">
-                        <strong>Missing Ports:</strong>
-                        <ul class="port-list missing">
-                            {% for port in expected_ports_status.missing_ports %}
-                            <li><code>{{ port.port }}/{{ port.protocol }}</code></li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    {% endif %}
-                    {% if expected_ports_status.open_ports %}
-                    <div class="open-expected-ports">
-                        <strong>Open:</strong>
-                        <ul class="port-list open">
-                            {% for port in expected_ports_status.open_ports %}
-                            <li><code>{{ port.port }}/{{ port.protocol }}</code> ({{ port.service or '-' }})</li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    {% endif %}
-                </div>
-                {% else %}
-                <p class="no-data">No scan data available yet</p>
-                {% endif %}
-            </div>
-        </div>
-        {% endif %}
-
-        <!-- Actions Card -->
-        <div class="card actions-card">
-            <div class="card-header">
-                <h2>Actions</h2>
-            </div>
-            <div class="card-body">
-                <button class="btn btn-primary" id="trigger-scan" onclick="triggerScan()">
-                    <span class="btn-icon">&#9654;</span>
-                    Trigger Manual Scan
-                </button>
-                <p class="scan-info">
-                    Auto-scan every <strong>{{ scan_interval }}</strong> hours
-                </p>
-                <div id="scan-status" class="scan-status hidden"></div>
-
-                <!-- Scan Progress (hidden by default) -->
-                <div id="scan-progress" class="scan-progress hidden">
-                    <!-- Time Display -->
-                    <div class="scan-time-info">
-                        <span class="elapsed-time">
-                            <strong>Elapsed:</strong> <span id="elapsed-time">00:00</span>
-                        </span>
-                        <span class="eta-time">
-                            <strong>ETA:</strong> <span id="eta-time">Calculating...</span>
-                        </span>
-                    </div>
-
-                    <!-- TCP/UDP Status Grid -->
-                    <div class="scan-type-status">
-                        <div class="scan-type tcp-scan">
-                            <span class="scan-type-icon" id="tcp-icon">&#9675;</span>
-                            <span class="scan-type-label">TCP</span>
-                            <span class="scan-type-progress" id="tcp-status">Waiting...</span>
-                            <span class="scan-type-count" id="tcp-count">0 ports</span>
-                        </div>
-                        <div class="scan-type udp-scan">
-                            <span class="scan-type-icon" id="udp-icon">&#9675;</span>
-                            <span class="scan-type-label">UDP</span>
-                            <span class="scan-type-progress" id="udp-status">Waiting...</span>
-                            <span class="scan-type-count" id="udp-count">0 ports</span>
-                        </div>
-                    </div>
-
-                    <!-- Progress Bar -->
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="progress-fill"></div>
-                    </div>
-                    <div class="progress-info">
-                        <span id="progress-phase">Starting scan...</span>
-                    </div>
-
-                    <!-- Activity Log -->
-                    <div class="activity-log-container">
-                        <div class="activity-log-header">
-                            <span>Activity Log</span>
-                            <button class="btn-toggle-log" id="toggle-log" onclick="toggleActivityLog()">&#9660;</button>
-                        </div>
-                        <div class="activity-log" id="activity-log">
-                            <!-- Log entries will be added here dynamically -->
-                        </div>
-                    </div>
-
-                    <!-- Live Discovered Ports -->
-                    <div class="discovered-ports-container" id="discovered-ports-container" style="display: none;">
-                        <div class="discovered-ports-header">
-                            <span>Discovered Ports (<span id="discovered-ports-count">0</span>)</span>
-                        </div>
-                        <div class="discovered-ports-list" id="discovered-ports-list">
-                            <!-- Ports will be added here dynamically -->
-                        </div>
-                    </div>
-                </div>
-            </div>
+        <div class="header-badges">
+            <span class="header-badge hostname">
+                <i data-lucide="monitor"></i>
+                {{ target }}
+            </span>
+            <span class="header-badge live">
+                <i data-lucide="activity"></i>
+                Live Monitoring
+            </span>
+            <span class="header-badge protected">
+                <i data-lucide="shield"></i>
+                Protected
+            </span>
         </div>
     </div>
 
-    <!-- Open Ports Card -->
-    <div class="card ports-card">
-        <div class="card-header">
-            <h2>Open Ports</h2>
-        </div>
-        <div class="card-body">
-            {% if status and status.ports %}
-            <div class="table-responsive">
-                <table class="data-table" id="ports-table">
-                    <thead>
-                        <tr>
-                            <th>Port</th>
-                            <th>Protocol</th>
-                            <th>Service</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for port in status.ports %}
-                        <tr id="port-row-{{ port.port }}-{{ port.protocol }}">
-                            <td><code>{{ port.port }}</code></td>
-                            <td>{{ port.protocol|upper }}</td>
-                            <td class="service-cell">
+    <!-- Main Dashboard Grid -->
+    <div class="dashboard-grid">
+        <!-- Left Sidebar -->
+        <div class="dashboard-sidebar">
+            <!-- Host Status Card -->
+            <div class="card host-status-card">
+                <div class="card-header">
+                    <h2><i data-lucide="server"></i> Host Status</h2>
+                </div>
+                <div class="card-body">
+                    {% if status %}
+                    <div class="host-status-main">
+                        <div class="status-icon-wrapper {% if status.host_status == 'offline' or status.host_status == 'down' %}down{% endif %}">
+                            {% if status.host_status == 'offline' or status.host_status == 'down' %}
+                            <i data-lucide="shield-x"></i>
+                            {% else %}
+                            <i data-lucide="shield-check"></i>
+                            {% endif %}
+                        </div>
+                        <div class="status-content">
+                            <div class="status-title">
+                                <span class="status-text">{{ (status.host_status or 'unknown')|upper }}</span>
+                                <span class="badge badge-{{ status.host_status or 'unknown' }}">
+                                    {% if status.host_status == 'online' or status.host_status == 'up' %}Online{% elif status.host_status == 'offline' or status.host_status == 'down' %}Offline{% else %}Unknown{% endif %}
+                                </span>
+                            </div>
+                            <span class="status-subtitle">System Status</span>
+                        </div>
+                    </div>
+                    <div class="hostname-row">
+                        <div class="hostname-label">Hostname</div>
+                        <a href="https://{{ target }}" target="_blank" class="hostname-value">{{ target }}</a>
+                    </div>
+                    <div class="status-stats">
+                        <div class="stat-box">
+                            <div class="stat-box-label">
+                                <i data-lucide="network"></i>
+                                Open Ports
+                            </div>
+                            <div class="stat-box-value">{{ status.open_port_count }}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-box-label">
+                                <i data-lucide="clock"></i>
+                                Last Scan
+                            </div>
+                            <div class="stat-box-value">
+                                {% if status.last_scan %}
+                                <span class="timestamp" data-time="{{ status.last_scan }}" data-format="time">{{ status.last_scan }}</span>
+                                {% else %}
+                                Never
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="host-status-main">
+                        <div class="status-icon-wrapper">
+                            <i data-lucide="shield-question"></i>
+                        </div>
+                        <div class="status-content">
+                            <div class="status-title">
+                                <span class="status-text">NO DATA</span>
+                                <span class="badge badge-unknown">Unknown</span>
+                            </div>
+                            <span class="status-subtitle">System Status</span>
+                        </div>
+                    </div>
+                    <p class="no-data">No scan results available yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Quick Actions Card -->
+            <div class="card quick-actions-card">
+                <div class="card-header">
+                    <h2><i data-lucide="zap"></i> Quick Actions</h2>
+                </div>
+                <div class="card-body">
+                    <button class="btn btn-primary" id="trigger-scan" onclick="triggerScan()">
+                        <i data-lucide="play"></i>
+                        Trigger Manual Scan
+                    </button>
+                    <div class="scan-info">
+                        <i data-lucide="refresh-cw"></i>
+                        Auto-scan every {{ scan_interval }} hour{% if scan_interval != 1 %}s{% endif %}
+                    </div>
+                    <div id="scan-status" class="scan-status hidden"></div>
+
+                    <!-- Scan Progress (hidden by default) -->
+                    <div id="scan-progress" class="scan-progress hidden">
+                        <!-- Time Display -->
+                        <div class="scan-time-info">
+                            <span class="elapsed-time">
+                                <strong>Elapsed:</strong> <span id="elapsed-time">00:00</span>
+                            </span>
+                            <span class="eta-time">
+                                <strong>ETA:</strong> <span id="eta-time">Calculating...</span>
+                            </span>
+                        </div>
+
+                        <!-- TCP/UDP Status Grid -->
+                        <div class="scan-type-status">
+                            <div class="scan-type tcp-scan">
+                                <span class="scan-type-icon" id="tcp-icon">&#9675;</span>
+                                <span class="scan-type-label">TCP</span>
+                                <span class="scan-type-progress" id="tcp-status">Waiting...</span>
+                                <span class="scan-type-count" id="tcp-count">0 ports</span>
+                            </div>
+                            <div class="scan-type udp-scan">
+                                <span class="scan-type-icon" id="udp-icon">&#9675;</span>
+                                <span class="scan-type-label">UDP</span>
+                                <span class="scan-type-progress" id="udp-status">Waiting...</span>
+                                <span class="scan-type-count" id="udp-count">0 ports</span>
+                            </div>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill"></div>
+                        </div>
+                        <div class="progress-info">
+                            <span id="progress-phase">Starting scan...</span>
+                        </div>
+
+                        <!-- Activity Log -->
+                        <div class="activity-log-container">
+                            <div class="activity-log-header">
+                                <span>Activity Log</span>
+                                <button class="btn-toggle-log" id="toggle-log" onclick="toggleActivityLog()">
+                                    <i data-lucide="chevron-down" style="width:14px;height:14px;"></i>
+                                </button>
+                            </div>
+                            <div class="activity-log" id="activity-log">
+                                <!-- Log entries will be added here dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Live Discovered Ports -->
+                        <div class="discovered-ports-container" id="discovered-ports-container" style="display: none;">
+                            <div class="discovered-ports-header">
+                                <span>Discovered Ports (<span id="discovered-ports-count">0</span>)</span>
+                            </div>
+                            <div class="discovered-ports-list" id="discovered-ports-list">
+                                <!-- Ports will be added here dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Open Ports Card -->
+            <div class="card open-ports-card">
+                <div class="card-header">
+                    <h2><i data-lucide="network"></i> Open Ports</h2>
+                    {% if status and status.ports %}
+                    <span class="port-count-badge">{{ status.ports|length }} active</span>
+                    {% endif %}
+                </div>
+                {% if status and status.ports %}
+                <ul class="port-list">
+                    {% for port in status.ports %}
+                    <li class="port-list-item" id="port-row-{{ port.port }}-{{ port.protocol }}">
+                        <div class="port-icon">
+                            <i data-lucide="globe"></i>
+                        </div>
+                        <div class="port-info">
+                            <div class="port-number">
+                                {{ port.port }}
+                                <span class="port-protocol">{{ port.protocol|upper }}</span>
                                 {%- if port.is_stealth -%}
-                                    <span class="badge badge-stealth" title="Stealth service - expected but cannot verify (service doesn't respond to probes)">stealth</span>
+                                <span class="badge badge-stealth" title="Stealth service">stealth</span>
                                 {%- endif -%}
+                            </div>
+                            <div class="port-service">
                                 {%- if port.service and port.service != 'unknown' -%}
                                     {{ port.service }}
-                                    {%- if port.common_service and port.common_service != port.service %} <span class="common-service">({{ port.common_service }})</span>{% endif -%}
                                 {%- elif port.common_service -%}
-                                    <span class="unknown-service">unknown</span> <span class="common-service">({{ port.common_service }})</span>
+                                    {{ port.common_service }}
                                 {%- else -%}
-                                    <span class="unknown-service">unknown</span>
+                                    unknown
                                 {%- endif -%}
-                            </td>
-                            <td>
-                                <button class="btn btn-sm btn-rescan" onclick="rescanPort({{ port.port }}, '{{ port.protocol }}')" title="Rescan this port">
-                                    &#x21bb;
-                                </button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-rescan" onclick="rescanPort({{ port.port }}, '{{ port.protocol }}')" title="Rescan this port">
+                            <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i>
+                        </button>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="card-body">
+                    <p class="no-data">No open ports detected</p>
+                </div>
+                {% endif %}
             </div>
-            {% else %}
-            <p class="no-data">No open ports detected</p>
+
+            <!-- Expected Ports Card (only shown if configured) -->
+            {% if expected_ports_status %}
+            <div class="card expected-ports-card">
+                <div class="card-header">
+                    <h2><i data-lucide="list-checks"></i> Expected Ports</h2>
+                </div>
+                <div class="card-body">
+                    {% if expected_ports_status.last_check %}
+                    <div class="status-indicator {{ 'up' if expected_ports_status.all_open else 'down' }}">
+                        <span class="status-dot"></span>
+                        <span class="status-text">
+                            {% if expected_ports_status.all_open %}
+                            ALL OPEN
+                            {% else %}
+                            {{ expected_ports_status.missing_ports|length }} MISSING
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="expected-ports-details">
+                        {% if expected_ports_status.missing_ports %}
+                        <div class="missing-ports-alert">
+                            <strong>Missing Ports:</strong>
+                            <ul class="port-list missing">
+                                {% for port in expected_ports_status.missing_ports %}
+                                <li><code>{{ port.port }}/{{ port.protocol }}</code></li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        {% if expected_ports_status.open_ports %}
+                        <div class="open-expected-ports">
+                            <strong>Open:</strong>
+                            <ul class="port-list open">
+                                {% for port in expected_ports_status.open_ports %}
+                                <li><code>{{ port.port }}/{{ port.protocol }}</code> ({{ port.service or '-' }})</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <p class="no-data">No scan data available yet</p>
+                    {% endif %}
+                </div>
+            </div>
             {% endif %}
         </div>
-    </div>
 
-    <!-- Port History Chart -->
-    <div class="card chart-card">
-        <div class="card-header">
-            <h2>Open Ports Over Time</h2>
-        </div>
-        <div class="card-body">
-            <canvas id="portHistoryChart"></canvas>
-        </div>
-    </div>
+        <!-- Center Main Content -->
+        <div class="dashboard-main">
+            <!-- Port History Chart -->
+            <div class="card chart-card">
+                <div class="card-header">
+                    <h2><i data-lucide="trending-up"></i> Open Ports Over Time</h2>
+                    <div class="trend-badge" id="port-trend-badge">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                </div>
+                <div class="card-body">
+                    <canvas id="portHistoryChart"></canvas>
+                </div>
+            </div>
 
-    <!-- Host Uptime Chart -->
-    <div class="card chart-card">
-        <div class="card-header">
-            <h2>Host Uptime Status</h2>
+            <!-- Host Uptime Grid -->
+            <div class="card uptime-card">
+                <div class="card-header">
+                    <h2><i data-lucide="activity"></i> Host Uptime (30 days)</h2>
+                    <div class="uptime-percentage" id="uptime-percentage">
+                        <!-- Will be populated by JavaScript -->
+                    </div>
+                </div>
+                <div class="uptime-grid" id="uptime-grid">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+                <div class="uptime-legend">
+                    <div class="legend-item">
+                        <span class="legend-dot online"></span>
+                        Online
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot partial"></span>
+                        Partial
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot offline"></span>
+                        Offline
+                    </div>
+                </div>
+            </div>
         </div>
-        <div class="card-body">
-            <canvas id="hostUptimeChart"></canvas>
-        </div>
-    </div>
 
-    <!-- Recent Scans Card -->
-    <div class="card scans-card">
-        <div class="card-header">
-            <h2>Recent Scans</h2>
-            <a href="/history" class="view-all">View All &rarr;</a>
-        </div>
-        <div class="card-body">
-            {% if recent_scans %}
-            <div class="table-responsive">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Status</th>
-                            <th>Host</th>
-                            <th>Ports</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+        <!-- Right Panel -->
+        <div class="dashboard-panel">
+            <!-- Recent Scans Card -->
+            <div class="card recent-scans-card">
+                <div class="card-header">
+                    <h2><i data-lucide="clock"></i> Recent Scans</h2>
+                    <a href="/history" class="view-all">
+                        View All
+                        <i data-lucide="arrow-right"></i>
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% if recent_scans %}
+                    <ul class="scan-list">
                         {% for scan in recent_scans %}
-                        <tr class="clickable" onclick="window.location='/scan/{{ scan.scan_id }}'">
-                            <td>
-                                <span class="timestamp" data-time="{{ scan.completed_at or scan.started_at }}">
-                                    {{ scan.completed_at or scan.started_at }}
-                                </span>
-                            </td>
-                            <td>
-                                <span class="badge badge-{{ scan.status }}">{{ scan.status }}</span>
-                            </td>
-                            <td>
-                                <span class="badge badge-{{ scan.host_status or 'unknown' }}">
-                                    {{ (scan.host_status or 'unknown')|upper }}
-                                </span>
-                            </td>
-                            <td>{{ scan.ports|length }}</td>
-                        </tr>
+                        <li class="scan-list-item" onclick="window.location='/scan/{{ scan.scan_id }}'">
+                            <div class="scan-status-icon {{ scan.status }}">
+                                {% if scan.status == 'completed' %}
+                                <i data-lucide="check-circle"></i>
+                                {% elif scan.status == 'running' %}
+                                <i data-lucide="loader"></i>
+                                {% else %}
+                                <i data-lucide="x-circle"></i>
+                                {% endif %}
+                            </div>
+                            <div class="scan-info-content">
+                                <div class="scan-datetime">
+                                    <span class="timestamp" data-time="{{ scan.completed_at or scan.started_at }}" data-format="datetime">
+                                        {{ scan.completed_at or scan.started_at }}
+                                    </span>
+                                </div>
+                                <div class="scan-badges">
+                                    <span class="badge badge-{{ scan.status }}">{{ scan.status|capitalize }}</span>
+                                    <span class="badge badge-{{ scan.host_status or 'na' }}">
+                                        {% if scan.host_status %}{{ scan.host_status|upper }}{% else %}N/A{% endif %}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="scan-port-count">
+                                {{ scan.ports|length }}
+                                <div class="scan-port-label">ports</div>
+                            </div>
+                        </li>
                         {% endfor %}
-                    </tbody>
-                </table>
+                    </ul>
+                    {% else %}
+                    <p class="no-data">No scans recorded yet</p>
+                    {% endif %}
+                </div>
             </div>
-            {% else %}
-            <p class="no-data">No scans recorded yet</p>
-            {% endif %}
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Re-initialize Lucide icons after dynamic content loads
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
+    });
+</script>
 {% endblock %}

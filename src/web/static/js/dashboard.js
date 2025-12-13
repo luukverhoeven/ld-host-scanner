@@ -202,10 +202,15 @@ function toggleActivityLog() {
 
     if (logContainer.classList.contains('collapsed')) {
         logContainer.classList.remove('collapsed');
-        toggleBtn.innerHTML = '&#9660;';  // Down arrow
+        toggleBtn.innerHTML = '<i data-lucide="chevron-down" style="width:14px;height:14px;"></i>';
     } else {
         logContainer.classList.add('collapsed');
-        toggleBtn.innerHTML = '&#9654;';  // Right arrow
+        toggleBtn.innerHTML = '<i data-lucide="chevron-right" style="width:14px;height:14px;"></i>';
+    }
+
+    // Re-create Lucide icons
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
     }
 }
 
@@ -350,7 +355,10 @@ async function triggerScan() {
 
     // Disable button
     button.disabled = true;
-    button.innerHTML = '<span class="btn-icon">&#9203;</span> Scanning...';
+    button.innerHTML = '<i data-lucide="loader" class="spin"></i> Scanning...';
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+    }
 
     // Show initial status
     statusDiv.classList.remove('hidden', 'success', 'error');
@@ -406,7 +414,10 @@ async function triggerScan() {
             progressDiv.classList.add('hidden');
         }
         button.disabled = false;
-        button.innerHTML = '<span class="btn-icon">&#9654;</span> Trigger Manual Scan';
+        button.innerHTML = '<i data-lucide="play"></i> Trigger Manual Scan';
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
     }
 }
 
@@ -414,9 +425,9 @@ async function triggerScan() {
 async function rescanPort(port, protocol) {
     const row = document.getElementById(`port-row-${port}-${protocol}`);
     const button = row ? row.querySelector('.btn-rescan') : null;
-    const serviceCell = row ? row.querySelector('.service-cell') : null;
+    const serviceDiv = row ? row.querySelector('.port-service') : null;
 
-    if (!button || !serviceCell) {
+    if (!button || !serviceDiv) {
         console.error('Could not find row elements for port', port);
         return;
     }
@@ -425,9 +436,6 @@ async function rescanPort(port, protocol) {
     const originalContent = button.innerHTML;
     button.disabled = true;
     button.classList.add('loading');
-
-    // Store original service content
-    const originalServiceContent = serviceCell.innerHTML;
 
     try {
         const response = await fetch(`/api/ports/${port}/rescan?protocol=${protocol}&intensity=normal`, {
@@ -440,54 +448,30 @@ async function rescanPort(port, protocol) {
         const data = await response.json();
 
         if (response.ok) {
-            // Update the service cell with new data (avoid innerHTML to prevent XSS)
-            serviceCell.textContent = '';
-
+            // Update the service div with new data
             const service = data.service;
             const commonService = data.common_service;
-            const version = data.version;
 
             if (service && service !== 'unknown') {
-                serviceCell.appendChild(document.createTextNode(service));
-                if (commonService && commonService !== service) {
-                    serviceCell.appendChild(document.createTextNode(' '));
-                    const commonSpan = document.createElement('span');
-                    commonSpan.className = 'common-service';
-                    commonSpan.textContent = `(${commonService})`;
-                    serviceCell.appendChild(commonSpan);
-                }
+                serviceDiv.textContent = service;
             } else if (commonService) {
-                const unknownSpan = document.createElement('span');
-                unknownSpan.className = 'unknown-service';
-                unknownSpan.textContent = 'unknown';
-                serviceCell.appendChild(unknownSpan);
-
-                serviceCell.appendChild(document.createTextNode(' '));
-                const commonSpan = document.createElement('span');
-                commonSpan.className = 'common-service';
-                commonSpan.textContent = `(${commonService})`;
-                serviceCell.appendChild(commonSpan);
+                serviceDiv.textContent = commonService;
             } else {
-                const unknownSpan = document.createElement('span');
-                unknownSpan.className = 'unknown-service';
-                unknownSpan.textContent = 'unknown';
-                serviceCell.appendChild(unknownSpan);
-            }
-
-            if (version) {
-                serviceCell.appendChild(document.createTextNode(' '));
-                const versionSpan = document.createElement('span');
-                versionSpan.className = 'version-info';
-                versionSpan.textContent = version;
-                serviceCell.appendChild(versionSpan);
+                serviceDiv.textContent = 'unknown';
             }
 
             // Show success indicator briefly
-            button.innerHTML = '&#x2713;';
+            button.innerHTML = '<i data-lucide="check" style="width:14px;height:14px;"></i>';
             button.classList.remove('loading');
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
             setTimeout(() => {
                 button.innerHTML = originalContent;
                 button.disabled = false;
+                if (typeof lucide !== 'undefined') {
+                    lucide.createIcons();
+                }
             }, 2000);
         } else {
             throw new Error(data.detail || 'Rescan failed');
@@ -496,15 +480,21 @@ async function rescanPort(port, protocol) {
         console.error('Rescan failed:', error);
 
         // Show error state
-        button.innerHTML = '&#x2717;';
+        button.innerHTML = '<i data-lucide="x" style="width:14px;height:14px;"></i>';
         button.classList.remove('loading');
         button.classList.add('error');
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
 
         // Restore after delay
         setTimeout(() => {
             button.innerHTML = originalContent;
             button.disabled = false;
             button.classList.remove('error');
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
         }, 3000);
     }
 }
@@ -521,21 +511,43 @@ function formatTimestamps() {
 
     timestamps.forEach(el => {
         const timeStr = el.dataset.time || el.textContent;
+        const format = el.dataset.format || 'datetime';
         if (!timeStr || timeStr === 'None') return;
 
         try {
             const date = new Date(timeStr);
             if (isNaN(date.getTime())) return;
 
-            // Format in server timezone
-            const options = {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZone: serverTimezone,
-            };
+            let options = {};
+
+            if (format === 'time') {
+                // Just time for "Last Scan" display
+                options = {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: serverTimezone,
+                };
+            } else if (format === 'datetime') {
+                // Date and time for Recent Scans
+                options = {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: serverTimezone,
+                };
+            } else {
+                // Default full format
+                options = {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: serverTimezone,
+                };
+            }
 
             el.textContent = date.toLocaleString(undefined, options);
             el.title = date.toISOString();
@@ -578,12 +590,10 @@ async function updateStatus() {
 // Port history chart instance
 let portHistoryChart = null;
 
-// Host uptime chart instance
-let hostUptimeChart = null;
-
-// Load and render port history chart
+// Load and render port history chart with trend badge
 async function loadPortHistoryChart() {
     const canvas = document.getElementById('portHistoryChart');
+    const trendBadge = document.getElementById('port-trend-badge');
     if (!canvas) return;
 
     try {
@@ -594,10 +604,32 @@ async function loadPortHistoryChart() {
             // No data available
             const ctx = canvas.getContext('2d');
             ctx.font = '14px system-ui';
-            ctx.fillStyle = '#666';
+            ctx.fillStyle = '#64748b';
             ctx.textAlign = 'center';
             ctx.fillText('No scan history available yet', canvas.width / 2, canvas.height / 2);
             return;
+        }
+
+        // Calculate trend percentage
+        if (trendBadge && data.length >= 2) {
+            const firstValue = data[0].open_port_count;
+            const lastValue = data[data.length - 1].open_port_count;
+
+            if (firstValue > 0) {
+                const change = ((lastValue - firstValue) / firstValue) * 100;
+                const changeStr = change >= 0 ? `+${change.toFixed(0)}%` : `${change.toFixed(0)}%`;
+                const isPositive = change >= 0;
+
+                trendBadge.innerHTML = `
+                    <i data-lucide="${isPositive ? 'trending-up' : 'trending-down'}"></i>
+                    ${changeStr}
+                `;
+                trendBadge.className = `trend-badge ${isPositive ? 'negative' : 'positive'}`;
+
+                if (typeof lucide !== 'undefined') {
+                    lucide.createIcons();
+                }
+            }
         }
 
         // Format data for Chart.js (use server timezone)
@@ -607,8 +639,6 @@ async function loadPortHistoryChart() {
             return date.toLocaleString(undefined, {
                 month: 'short',
                 day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
                 timeZone: serverTimezone,
             });
         });
@@ -619,7 +649,7 @@ async function loadPortHistoryChart() {
             portHistoryChart.destroy();
         }
 
-        // Create new chart
+        // Create new chart with updated styling
         portHistoryChart = new Chart(canvas, {
             type: 'line',
             data: {
@@ -627,16 +657,16 @@ async function loadPortHistoryChart() {
                 datasets: [{
                     label: 'Open Ports',
                     data: portCounts,
-                    borderColor: '#3498db',
-                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
                     borderWidth: 2,
                     fill: true,
-                    tension: 0.3,
-                    pointBackgroundColor: '#3498db',
+                    tension: 0.4,
+                    pointBackgroundColor: '#3b82f6',
                     pointBorderColor: '#fff',
                     pointBorderWidth: 2,
-                    pointRadius: 4,
-                    pointHoverRadius: 6,
+                    pointRadius: 3,
+                    pointHoverRadius: 5,
                 }]
             },
             options: {
@@ -649,6 +679,13 @@ async function loadPortHistoryChart() {
                     tooltip: {
                         mode: 'index',
                         intersect: false,
+                        backgroundColor: '#1e293b',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        padding: 10,
+                        displayColors: false,
                     }
                 },
                 scales: {
@@ -657,19 +694,24 @@ async function loadPortHistoryChart() {
                             display: false
                         },
                         ticks: {
-                            maxRotation: 45,
-                            minRotation: 45
+                            color: '#64748b',
+                            font: {
+                                size: 11
+                            }
                         }
                     },
                     y: {
                         beginAtZero: true,
                         ticks: {
                             stepSize: 1,
-                            precision: 0
+                            precision: 0,
+                            color: '#64748b',
+                            font: {
+                                size: 11
+                            }
                         },
-                        title: {
-                            display: true,
-                            text: 'Open Ports'
+                        grid: {
+                            color: '#e2e8f0'
                         }
                     }
                 },
@@ -685,136 +727,72 @@ async function loadPortHistoryChart() {
     }
 }
 
-// Load and render host uptime chart
-async function loadHostUptimeChart() {
-    const canvas = document.getElementById('hostUptimeChart');
-    if (!canvas) return;
+// Load and render host uptime grid (colored squares)
+async function loadHostUptimeGrid() {
+    const gridContainer = document.getElementById('uptime-grid');
+    const percentageDisplay = document.getElementById('uptime-percentage');
+    if (!gridContainer) return;
 
     try {
-        // Fetch 48 data points (~12 hours at 15-minute intervals)
-        const response = await fetch('/api/host-status-history?limit=48');
+        // Fetch more data points for 30-day view
+        const response = await fetch('/api/host-status-history?limit=96');
         const data = await response.json();
 
         if (data.length === 0) {
-            const ctx = canvas.getContext('2d');
-            ctx.font = '14px system-ui';
-            ctx.fillStyle = '#666';
-            ctx.textAlign = 'center';
-            ctx.fillText('No host status history available yet', canvas.width / 2, canvas.height / 2);
+            gridContainer.innerHTML = '<p class="no-data" style="padding: 2rem; text-align: center;">No host status history available yet</p>';
             return;
         }
 
-        // Format data for Chart.js
+        // Calculate uptime percentage
+        const onlineCount = data.filter(item => item.status === 'online').length;
+        const uptimePercent = ((onlineCount / data.length) * 100).toFixed(1);
+
+        // Update percentage display
+        if (percentageDisplay) {
+            percentageDisplay.innerHTML = `
+                <i data-lucide="trending-up"></i>
+                ${uptimePercent}%
+            `;
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
+            }
+        }
+
+        // Clear existing content
+        gridContainer.innerHTML = '';
+
+        // Create colored squares for each data point
         const serverTimezone = getServerTimezone();
-        const labels = data.map(item => {
+        data.forEach(item => {
+            const square = document.createElement('div');
+            square.className = 'uptime-square';
+
+            // Determine color based on status
+            if (item.status === 'online') {
+                square.classList.add('online');
+            } else if (item.status === 'dns_only') {
+                square.classList.add('partial');
+            } else {
+                square.classList.add('offline');
+            }
+
+            // Add tooltip
             const date = new Date(item.checked_at);
-            return date.toLocaleString(undefined, {
+            const dateStr = date.toLocaleString(undefined, {
                 month: 'short',
                 day: 'numeric',
                 hour: '2-digit',
                 minute: '2-digit',
                 timeZone: serverTimezone,
             });
+            square.title = `${dateStr}: ${item.status.toUpperCase()}${item.check_method ? ` (${item.check_method})` : ''}`;
+
+            gridContainer.appendChild(square);
         });
 
-        // Convert status to numeric: online=1, dns_only=0.5, offline=0
-        const statusValues = data.map(item => {
-            if (item.status === 'online') return 1;
-            if (item.status === 'dns_only') return 0.5;
-            return 0;
-        });
-
-        // Color based on status
-        const pointColors = data.map(item => {
-            if (item.status === 'online') return '#27ae60';  // success green
-            if (item.status === 'dns_only') return '#f39c12';  // warning orange
-            return '#e74c3c';  // danger red
-        });
-
-        // Destroy existing chart if any
-        if (hostUptimeChart) {
-            hostUptimeChart.destroy();
-        }
-
-        // Create step chart for uptime status
-        hostUptimeChart = new Chart(canvas, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Host Status',
-                    data: statusValues,
-                    borderColor: '#3498db',
-                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    stepped: 'before',  // Step chart for status changes
-                    pointBackgroundColor: pointColors,
-                    pointBorderColor: '#fff',
-                    pointBorderWidth: 2,
-                    pointRadius: 4,
-                    pointHoverRadius: 6,
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false,
-                        callbacks: {
-                            label: function(context) {
-                                const item = data[context.dataIndex];
-                                let label = item.status.toUpperCase();
-                                if (item.check_method) {
-                                    label += ` (via ${item.check_method})`;
-                                }
-                                return label;
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        grid: {
-                            display: false
-                        },
-                        ticks: {
-                            maxRotation: 45,
-                            minRotation: 45
-                        }
-                    },
-                    y: {
-                        min: 0,
-                        max: 1,
-                        ticks: {
-                            stepSize: 0.5,
-                            callback: function(value) {
-                                if (value === 1) return 'Online';
-                                if (value === 0.5) return 'DNS Only';
-                                if (value === 0) return 'Offline';
-                                return '';
-                            }
-                        },
-                        title: {
-                            display: true,
-                            text: 'Status'
-                        }
-                    }
-                },
-                interaction: {
-                    mode: 'nearest',
-                    axis: 'x',
-                    intersect: false
-                }
-            }
-        });
     } catch (error) {
-        console.error('Failed to load host uptime chart:', error);
+        console.error('Failed to load host uptime grid:', error);
+        gridContainer.innerHTML = '<p class="no-data" style="padding: 2rem; text-align: center;">Failed to load uptime data</p>';
     }
 }
 
@@ -828,5 +806,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load charts
     loadPortHistoryChart();
-    loadHostUptimeChart();
+    loadHostUptimeGrid();
+
+    // Re-create Lucide icons for any dynamic content
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+    }
 });
