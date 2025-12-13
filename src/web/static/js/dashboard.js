@@ -78,25 +78,47 @@ async function rescanPort(port, protocol) {
         const data = await response.json();
 
         if (response.ok) {
-            // Update the service cell with new data
-            let serviceHtml = '';
-            if (data.service && data.service !== 'unknown') {
-                serviceHtml = data.service;
-                if (data.common_service && data.common_service !== data.service) {
-                    serviceHtml += ` <span class="common-service">(${data.common_service})</span>`;
+            // Update the service cell with new data (avoid innerHTML to prevent XSS)
+            serviceCell.textContent = '';
+
+            const service = data.service;
+            const commonService = data.common_service;
+            const version = data.version;
+
+            if (service && service !== 'unknown') {
+                serviceCell.appendChild(document.createTextNode(service));
+                if (commonService && commonService !== service) {
+                    serviceCell.appendChild(document.createTextNode(' '));
+                    const commonSpan = document.createElement('span');
+                    commonSpan.className = 'common-service';
+                    commonSpan.textContent = `(${commonService})`;
+                    serviceCell.appendChild(commonSpan);
                 }
-            } else if (data.common_service) {
-                serviceHtml = `<span class="unknown-service">unknown</span> <span class="common-service">(${data.common_service})</span>`;
+            } else if (commonService) {
+                const unknownSpan = document.createElement('span');
+                unknownSpan.className = 'unknown-service';
+                unknownSpan.textContent = 'unknown';
+                serviceCell.appendChild(unknownSpan);
+
+                serviceCell.appendChild(document.createTextNode(' '));
+                const commonSpan = document.createElement('span');
+                commonSpan.className = 'common-service';
+                commonSpan.textContent = `(${commonService})`;
+                serviceCell.appendChild(commonSpan);
             } else {
-                serviceHtml = '<span class="unknown-service">unknown</span>';
+                const unknownSpan = document.createElement('span');
+                unknownSpan.className = 'unknown-service';
+                unknownSpan.textContent = 'unknown';
+                serviceCell.appendChild(unknownSpan);
             }
 
-            // Add version if available
-            if (data.version) {
-                serviceHtml += ` <span class="version-info">${data.version}</span>`;
+            if (version) {
+                serviceCell.appendChild(document.createTextNode(' '));
+                const versionSpan = document.createElement('span');
+                versionSpan.className = 'version-info';
+                versionSpan.textContent = version;
+                serviceCell.appendChild(versionSpan);
             }
-
-            serviceCell.innerHTML = serviceHtml;
 
             // Show success indicator briefly
             button.innerHTML = '&#x2713;';

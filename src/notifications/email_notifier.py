@@ -1,5 +1,6 @@
 """Email notifications via SMTP."""
 
+import html
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -20,10 +21,10 @@ def _build_port_table(ports: List[Dict]) -> str:
 
     rows = "".join(
         f"<tr>"
-        f"<td style='padding: 8px; border: 1px solid #ddd;'>{p['port']}</td>"
-        f"<td style='padding: 8px; border: 1px solid #ddd;'>{p['protocol'].upper()}</td>"
-        f"<td style='padding: 8px; border: 1px solid #ddd;'>{p.get('service', 'unknown')}</td>"
-        f"<td style='padding: 8px; border: 1px solid #ddd;'>{p.get('version', '-')}</td>"
+        f"<td style='padding: 8px; border: 1px solid #ddd;'>{html.escape(str(p['port']))}</td>"
+        f"<td style='padding: 8px; border: 1px solid #ddd;'>{html.escape(str(p['protocol']).upper())}</td>"
+        f"<td style='padding: 8px; border: 1px solid #ddd;'>{html.escape(str(p.get('service', 'unknown')))}</td>"
+        f"<td style='padding: 8px; border: 1px solid #ddd;'>{html.escape(str(p.get('version', '-')))}</td>"
         f"</tr>"
         for p in ports
     )
@@ -54,7 +55,8 @@ def _build_changes_list(changes: List[Dict]) -> str:
         f"<li style='padding: 5px 0;'>"
         f"<strong style='color: {'#d63031' if c['change_type'] == 'opened' else '#27ae60'};'>"
         f"{c['change_type'].upper()}</strong>: "
-        f"Port {c['port']}/{c['protocol']} ({c.get('service', 'unknown')})"
+        f"Port {html.escape(str(c['port']))}/{html.escape(str(c['protocol']))} "
+        f"({html.escape(str(c.get('service', 'unknown')))})"
         f"</li>"
         for c in changes
     )
@@ -100,6 +102,8 @@ async def send_email_alert(
 
     # Build HTML content
     status_color = "#27ae60" if host_status == "up" else "#e74c3c"
+    safe_target = html.escape(str(target))
+    safe_host_status = html.escape(str(host_status).upper())
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -112,12 +116,12 @@ async def send_email_alert(
         </div>
 
         <div style='background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd;'>
-            <h2 style='margin-top: 0;'>Target: {target}</h2>
+            <h2 style='margin-top: 0;'>Target: {safe_target}</h2>
 
             <p>
                 <strong>Status:</strong>
                 <span style='color: {status_color}; font-weight: bold;'>
-                    {host_status.upper()}
+                    {safe_host_status}
                 </span>
             </p>
 
@@ -198,6 +202,7 @@ async def send_host_offline_email(target: str) -> bool:
         return False
 
     subject = f"ALERT: {target} is OFFLINE"
+    safe_target = html.escape(str(target))
 
     html_content = f"""
     <!DOCTYPE html>
@@ -211,7 +216,7 @@ async def send_host_offline_email(target: str) -> bool:
         </div>
 
         <div style='background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd;'>
-            <h2 style='margin-top: 0; color: #e74c3c;'>Target: {target}</h2>
+            <h2 style='margin-top: 0; color: #e74c3c;'>Target: {safe_target}</h2>
 
             <p style='font-size: 18px;'>
                 The monitored host is not responding to network checks.

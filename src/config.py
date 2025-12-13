@@ -3,7 +3,7 @@
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from zoneinfo import ZoneInfo
 
 from pydantic_settings import BaseSettings
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         return bool(self.webhook_url)
 
     @property
-    def expected_ports_list(self) -> List[Dict[str, any]]:
+    def expected_ports_list(self) -> List[Dict[str, Any]]:
         """Parse expected ports into structured list.
 
         Returns:

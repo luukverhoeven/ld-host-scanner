@@ -84,7 +84,10 @@ class PortRescanResponse(BaseModel):
 
 
 @router.get("/scans", response_model=List[ScanResponse])
-async def list_scans(limit: int = 20, offset: int = 0):
+async def list_scans(
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=10_000),
+):
     """Get list of recent scans."""
     scans = await get_recent_scans(limit=limit, offset=offset)
     return scans
@@ -118,7 +121,7 @@ async def get_status():
 
 
 @router.get("/changes", response_model=List[ChangeResponse])
-async def list_changes(limit: int = 50):
+async def list_changes(limit: int = Query(50, ge=1, le=500)):
     """Get port change history."""
     changes = await get_port_history(limit=limit)
     return changes
@@ -153,7 +156,7 @@ async def get_config():
 
 
 @router.get("/port-history")
-async def port_history(limit: int = 30):
+async def port_history(limit: int = Query(30, ge=1, le=365)):
     """Get open port count history for charting."""
     history = await get_port_count_history(settings.target_host, limit)
     return history
@@ -162,10 +165,10 @@ async def port_history(limit: int = 30):
 @router.post("/ports/{port}/rescan", response_model=PortRescanResponse)
 async def rescan_port(
     port: int = Path(..., ge=1, le=65535, description="Port number to rescan"),
-    protocol: str = Query("tcp", regex="^(tcp|udp)$", description="Protocol"),
+    protocol: str = Query("tcp", pattern="^(tcp|udp)$", description="Protocol"),
     intensity: str = Query(
         "normal",
-        regex="^(light|normal|thorough)$",
+        pattern="^(light|normal|thorough)$",
         description="Service detection intensity",
     ),
 ):
