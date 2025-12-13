@@ -52,7 +52,7 @@ def test_start_scheduler_adds_jobs():
     with patch.object(job_scheduler, "create_scheduler", return_value=sched), \
          patch("src.scanner.port_scanner.run_full_scan", new=AsyncMock()), \
          patch("src.scanner.port_scanner.run_host_check", new=AsyncMock()):
-        job_scheduler.settings = SimpleNamespace(scan_interval_hours=2, data_dir=SimpleNamespace(mkdir=lambda **_: None), jobs_database_url="sqlite://")
+        job_scheduler.settings = SimpleNamespace(scan_interval_hours=2, host_check_interval_minutes=15, data_dir=SimpleNamespace(mkdir=lambda **_: None), jobs_database_url="sqlite://")
         job_scheduler.start_scheduler()
 
     ids = [call.kwargs.get("id") for call in sched.add_job.call_args_list]

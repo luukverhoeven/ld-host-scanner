@@ -150,3 +150,70 @@ class TestTimezoneAndLocalIso:
         aware = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         iso2 = config_module.to_local_iso(aware)
         assert iso2.startswith("2025-01-01T00:00:00")
+
+
+class TestHostCheckInterval:
+    """Tests for host_check_interval_minutes configuration."""
+
+    def test_host_check_interval_default(self):
+        """Test default value is 15 minutes."""
+        settings = Settings()
+        assert settings.host_check_interval_minutes == 15
+
+    def test_host_check_interval_custom(self):
+        """Test custom interval value."""
+        settings = Settings(host_check_interval_minutes=5)
+        assert settings.host_check_interval_minutes == 5
+
+    def test_host_check_interval_large_value(self):
+        """Test setting a larger interval value."""
+        settings = Settings(host_check_interval_minutes=60)
+        assert settings.host_check_interval_minutes == 60
+
+
+class TestHostOfflineThreshold:
+    """Tests for host_offline_threshold configuration."""
+
+    def test_host_offline_threshold_default(self):
+        """Test default value is 2."""
+        settings = Settings()
+        assert settings.host_offline_threshold == 2
+
+    def test_host_offline_threshold_custom(self):
+        """Test custom threshold value."""
+        settings = Settings(host_offline_threshold=5)
+        assert settings.host_offline_threshold == 5
+
+
+class TestExpectedPortsConfigured:
+    """Tests for expected_ports_configured property."""
+
+    def test_expected_ports_configured_true(self):
+        """Test returns True when ports are set."""
+        settings = Settings(expected_ports="80/tcp,443/tcp")
+        assert settings.expected_ports_configured is True
+
+    def test_expected_ports_configured_false(self):
+        """Test returns False when ports are not set."""
+        settings = Settings(expected_ports=None)
+        assert settings.expected_ports_configured is False
+
+        settings = Settings(expected_ports="")
+        assert settings.expected_ports_configured is False
+
+
+class TestWireGuardConfigured:
+    """Tests for wireguard_configured property."""
+
+    def test_wireguard_configured_with_key(self):
+        """Test returns True when public key is set."""
+        settings = Settings(wireguard_public_key="test-key-base64")
+        assert settings.wireguard_configured is True
+
+    def test_wireguard_configured_without_key(self):
+        """Test returns False when public key is not set."""
+        settings = Settings(wireguard_public_key=None)
+        assert settings.wireguard_configured is False
+
+        settings = Settings(wireguard_public_key="")
+        assert settings.wireguard_configured is False

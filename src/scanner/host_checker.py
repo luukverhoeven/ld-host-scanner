@@ -158,6 +158,7 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
         "ping_reachable": False,
         "tcp_reachable": False,
         "status": "unknown",
+        "method": None,  # How status was determined: icmp, tcp, dns, or None
     }
 
     # Try DNS resolution
@@ -193,13 +194,19 @@ async def quick_host_check(target: Optional[str] = None) -> dict:
                 result["tcp_reachable"] = True
                 break
 
-    # Determine overall status
-    if result["ping_reachable"] or result["tcp_reachable"]:
+    # Determine overall status and method
+    if result["ping_reachable"]:
         result["status"] = "online"
+        result["method"] = "icmp"
+    elif result["tcp_reachable"]:
+        result["status"] = "online"
+        result["method"] = "tcp"
     elif result["dns_resolved"]:
         result["status"] = "dns_only"  # DNS works but no ping/TCP response
+        result["method"] = "dns"
     else:
         result["status"] = "offline"
+        # method stays None for offline
 
     logger.info(
         "Quick check for %s: %s (DNS: %s, Ping: %s, TCP: %s)",

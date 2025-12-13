@@ -1058,7 +1058,7 @@ async def run_host_check() -> bool:
         status=current_status,
         dns_resolved=result.get("dns_resolved"),
         tcp_reachable=result.get("tcp_reachable"),
-        icmp_reachable=result.get("icmp_reachable"),
+        icmp_reachable=result.get("ping_reachable"),
         check_method=result.get("method"),
     )
 
