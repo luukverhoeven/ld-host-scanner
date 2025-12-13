@@ -1,7 +1,7 @@
 # Core dependencies
 python-nmap~=0.7.1
 icmplib~=3.0.4
-fastapi~=0.109.0
+fastapi~=0.124.4
 uvicorn[standard]~=0.27.0
 
 # Scheduling
@@ -15,24 +15,24 @@ aiosqlite~=0.21.0
 jinja2~=3.1.0
 
 # HTTP client for webhooks
-httpx~=0.26.0
+httpx~=0.28.1
 
 # Email
-aiosmtplib~=3.0.0
+aiosmtplib~=5.0.0
 
 # Configuration
 pydantic~=2.5.0
 pydantic-settings~=2.1.0
 
 # Cryptography (for WireGuard probe)
-cryptography~=42.0.0
+cryptography~=46.0.3
 
 # Form handling
 python-multipart~=0.0.20
 
 # Observability
 prometheus-client~=0.23.1
-python-json-logger~=2.0.7
+python-json-logger~=4.0.0
 
 # Server-Sent Events
 sse-starlette~=1.6.0
