@@ -48,9 +48,92 @@ async function triggerScan() {
     }
 }
 
-// Format timestamps to local time
+// Rescan a single port with nmap for detailed service detection
+async function rescanPort(port, protocol) {
+    const row = document.getElementById(`port-row-${port}-${protocol}`);
+    const button = row ? row.querySelector('.btn-rescan') : null;
+    const serviceCell = row ? row.querySelector('.service-cell') : null;
+
+    if (!button || !serviceCell) {
+        console.error('Could not find row elements for port', port);
+        return;
+    }
+
+    // Show loading state
+    const originalContent = button.innerHTML;
+    button.disabled = true;
+    button.classList.add('loading');
+
+    // Store original service content
+    const originalServiceContent = serviceCell.innerHTML;
+
+    try {
+        const response = await fetch(`/api/ports/${port}/rescan?protocol=${protocol}&intensity=normal`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            // Update the service cell with new data
+            let serviceHtml = '';
+            if (data.service && data.service !== 'unknown') {
+                serviceHtml = data.service;
+                if (data.common_service && data.common_service !== data.service) {
+                    serviceHtml += ` <span class="common-service">(${data.common_service})</span>`;
+                }
+            } else if (data.common_service) {
+                serviceHtml = `<span class="unknown-service">unknown</span> <span class="common-service">(${data.common_service})</span>`;
+            } else {
+                serviceHtml = '<span class="unknown-service">unknown</span>';
+            }
+
+            // Add version if available
+            if (data.version) {
+                serviceHtml += ` <span class="version-info">${data.version}</span>`;
+            }
+
+            serviceCell.innerHTML = serviceHtml;
+
+            // Show success indicator briefly
+            button.innerHTML = '&#x2713;';
+            button.classList.remove('loading');
+            setTimeout(() => {
+                button.innerHTML = originalContent;
+                button.disabled = false;
+            }, 2000);
+        } else {
+            throw new Error(data.detail || 'Rescan failed');
+        }
+    } catch (error) {
+        console.error('Rescan failed:', error);
+
+        // Show error state
+        button.innerHTML = '&#x2717;';
+        button.classList.remove('loading');
+        button.classList.add('error');
+
+        // Restore after delay
+        setTimeout(() => {
+            button.innerHTML = originalContent;
+            button.disabled = false;
+            button.classList.remove('error');
+        }, 3000);
+    }
+}
+
+// Get server timezone from body data attribute
+function getServerTimezone() {
+    return document.body.dataset.timezone || 'UTC';
+}
+
+// Format timestamps to server timezone
 function formatTimestamps() {
     const timestamps = document.querySelectorAll('.timestamp');
+    const serverTimezone = getServerTimezone();
 
     timestamps.forEach(el => {
         const timeStr = el.dataset.time || el.textContent;
@@ -60,13 +143,14 @@ function formatTimestamps() {
             const date = new Date(timeStr);
             if (isNaN(date.getTime())) return;
 
-            // Format as local date/time
+            // Format in server timezone
             const options = {
                 year: 'numeric',
                 month: 'short',
                 day: 'numeric',
                 hour: '2-digit',
                 minute: '2-digit',
+                timeZone: serverTimezone,
             };
 
             el.textContent = date.toLocaleString(undefined, options);
@@ -129,14 +213,16 @@ async function loadPortHistoryChart() {
             return;
         }
 
-        // Format data for Chart.js
+        // Format data for Chart.js (use server timezone)
+        const serverTimezone = getServerTimezone();
         const labels = data.map(item => {
             const date = new Date(item.completed_at);
             return date.toLocaleString(undefined, {
                 month: 'short',
                 day: 'numeric',
                 hour: '2-digit',
-                minute: '2-digit'
+                minute: '2-digit',
+                timeZone: serverTimezone,
             });
         });
         const portCounts = data.map(item => item.open_port_count);

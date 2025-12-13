@@ -1,7 +1,10 @@
 """Application configuration from environment variables."""
 
+import os
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
+from zoneinfo import ZoneInfo
 
 from pydantic_settings import BaseSettings
 
@@ -57,6 +60,20 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "text"  # "text" or "json"
 
+    # Host status monitoring
+    host_offline_threshold: int = 2  # Consecutive failures before offline alert
+
+    # Timezone for display (reads from TZ env var, defaults to UTC)
+    display_timezone: str = os.getenv("TZ", "UTC")
+
+    @property
+    def tz(self) -> ZoneInfo:
+        """Get timezone object for configured display timezone."""
+        try:
+            return ZoneInfo(self.display_timezone)
+        except Exception:
+            return ZoneInfo("UTC")
+
     # Expected ports (comma-separated, format: "port/protocol" e.g. "80/tcp,443/tcp,22/tcp")
     expected_ports: Optional[str] = None
 
@@ -110,3 +127,24 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+
+def to_local_iso(dt: Optional[datetime]) -> Optional[str]:
+    """Convert UTC datetime to configured timezone ISO string.
+
+    Args:
+        dt: Datetime object (assumed UTC if naive).
+
+    Returns:
+        ISO format string with timezone offset, or None if input is None.
+    """
+    if dt is None:
+        return None
+
+    # Assume naive datetime is UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+
+    # Convert to configured timezone
+    local_dt = dt.astimezone(settings.tz)
+    return local_dt.isoformat()

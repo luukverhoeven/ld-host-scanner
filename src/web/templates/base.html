@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/css/style.css">
     {% block head %}{% endblock %}
 </head>
-<body>
+<body data-timezone="{{ timezone|default('UTC') }}">
     <nav class="navbar">
         <div class="nav-brand">
             <span class="nav-icon">&#128274;</span>

@@ -114,20 +114,35 @@
         <div class="card-body">
             {% if status and status.ports %}
             <div class="table-responsive">
-                <table class="data-table">
+                <table class="data-table" id="ports-table">
                     <thead>
                         <tr>
                             <th>Port</th>
                             <th>Protocol</th>
                             <th>Service</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for port in status.ports %}
-                        <tr>
+                        <tr id="port-row-{{ port.port }}-{{ port.protocol }}">
                             <td><code>{{ port.port }}</code></td>
                             <td>{{ port.protocol|upper }}</td>
-                            <td>{{ port.service or '-' }}</td>
+                            <td class="service-cell">
+                                {%- if port.service and port.service != 'unknown' -%}
+                                    {{ port.service }}
+                                    {%- if port.common_service and port.common_service != port.service %} <span class="common-service">({{ port.common_service }})</span>{% endif -%}
+                                {%- elif port.common_service -%}
+                                    <span class="unknown-service">unknown</span> <span class="common-service">({{ port.common_service }})</span>
+                                {%- else -%}
+                                    <span class="unknown-service">unknown</span>
+                                {%- endif -%}
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-rescan" onclick="rescanPort({{ port.port }}, '{{ port.protocol }}')" title="Rescan this port">
+                                    &#x21bb;
+                                </button>
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>

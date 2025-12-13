@@ -458,3 +458,71 @@ body {
     width: 100% !important;
     height: 100% !important;
 }
+
+/* Common Service Display */
+.common-service {
+    color: var(--gray-color);
+    font-size: 0.85em;
+}
+
+.unknown-service {
+    color: var(--gray-color);
+    font-style: italic;
+}
+
+.service-cell {
+    white-space: nowrap;
+}
+
+/* Rescan Button */
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+}
+
+.btn-rescan {
+    background-color: var(--light-color);
+    color: var(--dark-color);
+    border: 1px solid var(--gray-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.btn-rescan:hover {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.btn-rescan:disabled {
+    background-color: var(--light-color);
+    color: var(--gray-color);
+    cursor: not-allowed;
+}
+
+.btn-rescan.loading {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Rescan status indicator */
+.rescan-status {
+    display: inline-block;
+    margin-left: 0.5rem;
+    font-size: 0.8rem;
+}
+
+.rescan-status.success {
+    color: var(--success-color);
+}
+
+.rescan-status.error {
+    color: var(--danger-color);
+}

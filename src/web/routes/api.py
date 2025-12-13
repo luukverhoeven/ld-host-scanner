@@ -1,9 +1,9 @@
 """REST API routes."""
 
+import asyncio
 from typing import List, Optional
-from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query
 from pydantic import BaseModel
 
 from src.config import settings
@@ -13,8 +13,10 @@ from src.storage.database import (
     get_current_status,
     get_port_history,
     get_port_count_history,
+    update_port_service,
 )
 from src.scheduler.job_scheduler import trigger_manual_scan, get_jobs_info
+from src.scanner.port_scanner import PortScanner
 
 router = APIRouter()
 
@@ -26,6 +28,7 @@ class PortResponse(BaseModel):
     state: Optional[str] = None
     service: Optional[str] = None
     version: Optional[str] = None
+    common_service: Optional[str] = None
 
 
 class ChangeResponse(BaseModel):
@@ -33,7 +36,7 @@ class ChangeResponse(BaseModel):
     protocol: str
     change_type: str
     service: Optional[str] = None
-    detected_at: Optional[datetime] = None
+    detected_at: Optional[str] = None
 
 
 class ScanResponse(BaseModel):
@@ -42,8 +45,8 @@ class ScanResponse(BaseModel):
     scan_type: str
     status: str
     host_status: Optional[str] = None
-    started_at: datetime
-    completed_at: Optional[datetime] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
     error_message: Optional[str] = None
     ports: List[PortResponse] = []
     changes: Optional[List[ChangeResponse]] = None
@@ -52,7 +55,7 @@ class ScanResponse(BaseModel):
 class StatusResponse(BaseModel):
     target: str
     host_status: Optional[str] = None
-    last_scan: Optional[datetime] = None
+    last_scan: Optional[str] = None
     open_port_count: int = 0
     ports: List[PortResponse] = []
 
@@ -67,6 +70,17 @@ class JobResponse(BaseModel):
 class TriggerResponse(BaseModel):
     message: str
     status: str = "queued"
+
+
+class PortRescanResponse(BaseModel):
+    port: int
+    protocol: str
+    state: str
+    service: Optional[str] = None
+    version: Optional[str] = None
+    common_service: Optional[str] = None
+    scan_duration_seconds: float
+    updated: bool
 
 
 @router.get("/scans", response_model=List[ScanResponse])
@@ -148,3 +162,64 @@ async def port_history(limit: int = 30):
     """Get open port count history for charting."""
     history = await get_port_count_history(settings.target_host, limit)
     return history
+
+
+@router.post("/ports/{port}/rescan", response_model=PortRescanResponse)
+async def rescan_port(
+    port: int = Path(..., ge=1, le=65535, description="Port number to rescan"),
+    protocol: str = Query("tcp", regex="^(tcp|udp)$", description="Protocol"),
+    intensity: str = Query(
+        "normal",
+        regex="^(light|normal|thorough)$",
+        description="Service detection intensity",
+    ),
+):
+    """Rescan a single port with detailed service detection using nmap.
+
+    This endpoint performs a focused nmap scan on a single port to get
+    detailed service and version information. Results are saved to the database.
+
+    Intensity levels:
+    - light: Fast scan, checks most likely services (~2-3 sec)
+    - normal: Balanced scan (~3-5 sec)
+    - thorough: Comprehensive scan, tries all probes (~5-10 sec)
+    """
+    target = settings.target_host
+
+    try:
+        # Create scanner and run the scan in a thread pool
+        scanner = PortScanner()
+        result = await asyncio.to_thread(
+            scanner.scan_single_port,
+            target,
+            port,
+            protocol,
+            intensity,
+        )
+
+        # Update the database with new service info
+        updated = await update_port_service(
+            target=target,
+            port_num=port,
+            protocol=protocol,
+            service=result.get("service"),
+            version=result.get("version"),
+            common_service=result.get("common_service"),
+        )
+
+        return PortRescanResponse(
+            port=result["port"],
+            protocol=result["protocol"],
+            state=result["state"],
+            service=result.get("service"),
+            version=result.get("version"),
+            common_service=result.get("common_service"),
+            scan_duration_seconds=result.get("scan_duration", 0),
+            updated=updated,
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Port rescan failed: {str(e)}",
+        )

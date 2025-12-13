@@ -59,6 +59,7 @@ class Port(Base):
     state = Column(String(20), nullable=False)  # 'open', 'filtered', 'closed'
     service = Column(String(100), nullable=True)
     version = Column(String(200), nullable=True)
+    common_service = Column(String(50), nullable=True)  # Common service from lookup
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -117,5 +118,6 @@ class HostStatus(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     target = Column(String(255), nullable=False, unique=True, index=True)
     status = Column(String(20), nullable=False)  # 'online', 'offline', 'dns_only'
+    failure_count = Column(Integer, nullable=False, default=0)  # Consecutive failures
     last_check = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

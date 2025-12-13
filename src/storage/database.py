@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-from src.config import settings
+from src.config import settings, to_local_iso
 from src.storage.models import Base, Scan, Port, PortChange, Notification, HostStatus
 
 logger = logging.getLogger(__name__)
@@ -104,6 +104,7 @@ async def save_ports(scan_id: str, ports: List[Dict]) -> None:
                 state=port_data["state"],
                 service=port_data.get("service"),
                 version=port_data.get("version"),
+                common_service=port_data.get("common_service"),
             )
             session.add(port)
         await session.commit()
@@ -215,8 +216,8 @@ async def get_recent_scans(limit: int = 20) -> List[Dict]:
                 "scan_type": scan.scan_type,
                 "status": scan.status,
                 "host_status": scan.host_status,
-                "started_at": scan.started_at,
-                "completed_at": scan.completed_at,
+                "started_at": to_local_iso(scan.started_at),
+                "completed_at": to_local_iso(scan.completed_at),
                 "error_message": scan.error_message,
                 "ports": [
                     {
@@ -225,6 +226,7 @@ async def get_recent_scans(limit: int = 20) -> List[Dict]:
                         "state": p.state,
                         "service": p.service,
                         "version": p.version,
+                        "common_service": p.common_service,
                     }
                     for p in ports
                 ],
@@ -262,8 +264,8 @@ async def get_scan_by_id(scan_id: str) -> Optional[Dict]:
             "scan_type": scan.scan_type,
             "status": scan.status,
             "host_status": scan.host_status,
-            "started_at": scan.started_at,
-            "completed_at": scan.completed_at,
+            "started_at": to_local_iso(scan.started_at),
+            "completed_at": to_local_iso(scan.completed_at),
             "error_message": scan.error_message,
             "ports": [
                 {
@@ -272,6 +274,7 @@ async def get_scan_by_id(scan_id: str) -> Optional[Dict]:
                     "state": p.state,
                     "service": p.service,
                     "version": p.version,
+                    "common_service": p.common_service,
                 }
                 for p in ports
             ],
@@ -304,7 +307,7 @@ async def get_port_history(limit: int = 50) -> List[Dict]:
                 "protocol": c.protocol,
                 "change_type": c.change_type,
                 "service": c.service,
-                "detected_at": c.detected_at,
+                "detected_at": to_local_iso(c.detected_at),
             }
             for c in changes
         ]
@@ -355,18 +358,75 @@ async def get_current_status(target: str) -> Optional[Dict]:
         return {
             "target": target,
             "host_status": status,
-            "last_scan": last_scan,
-            "last_host_check": status_time,
+            "last_scan": to_local_iso(last_scan),
+            "last_host_check": to_local_iso(status_time),
             "open_port_count": len(ports),
             "ports": [
                 {
                     "port": p.port,
                     "protocol": p.protocol,
                     "service": p.service,
+                    "common_service": p.common_service,
                 }
                 for p in ports
             ],
         }
+
+
+async def update_port_service(
+    target: str,
+    port_num: int,
+    protocol: str,
+    service: Optional[str],
+    version: Optional[str],
+    common_service: Optional[str],
+) -> bool:
+    """Update service/version info for a port in the latest scan.
+
+    Args:
+        target: Target hostname.
+        port_num: Port number.
+        protocol: Protocol ('tcp' or 'udp').
+        service: Detected service name.
+        version: Detected version string.
+        common_service: Common service name from lookup.
+
+    Returns:
+        True if updated successfully, False otherwise.
+    """
+    async with await get_session() as session:
+        # Find the latest completed scan for this target
+        scan_result = await session.execute(
+            select(Scan)
+            .where(Scan.target == target)
+            .where(Scan.status == "completed")
+            .order_by(desc(Scan.completed_at))
+            .limit(1)
+        )
+        scan = scan_result.scalar_one_or_none()
+
+        if not scan:
+            return False
+
+        # Find the port record
+        port_result = await session.execute(
+            select(Port)
+            .where(Port.scan_id == scan.scan_id)
+            .where(Port.port == port_num)
+            .where(Port.protocol == protocol)
+        )
+        port_record = port_result.scalar_one_or_none()
+
+        if not port_record:
+            return False
+
+        # Update the port record
+        port_record.service = service
+        port_record.version = version
+        port_record.common_service = common_service
+
+        await session.commit()
+        return True
 
 
 async def save_notification(
@@ -533,19 +593,24 @@ async def get_expected_ports_status(
 
         return {
             "configured": True,
-            "last_check": scan.completed_at,
+            "last_check": to_local_iso(scan.completed_at),
             "all_open": len(missing_expected) == 0,
             "open_ports": open_expected,
             "missing_ports": missing_expected,
         }
 
 
-async def save_host_status(target: str, status: str) -> None:
+async def save_host_status(target: str, status: str) -> int:
     """Save or update host status from quick check.
+
+    Tracks consecutive failures: resets to 0 when online, increments otherwise.
 
     Args:
         target: Target hostname.
         status: Host status ('online', 'offline', 'dns_only').
+
+    Returns:
+        Current failure count (0 if online, incremented if not online).
     """
     async with await get_session() as session:
         result = await session.execute(
@@ -558,15 +623,23 @@ async def save_host_status(target: str, status: str) -> None:
         if host_status:
             host_status.status = status
             host_status.last_check = now
+            if status == "online":
+                host_status.failure_count = 0
+            else:
+                host_status.failure_count = (host_status.failure_count or 0) + 1
+            failure_count = host_status.failure_count
         else:
+            failure_count = 0 if status == "online" else 1
             host_status = HostStatus(
                 target=target,
                 status=status,
+                failure_count=failure_count,
                 last_check=now,
             )
             session.add(host_status)
 
         await session.commit()
+        return failure_count
 
 
 async def get_last_host_status(target: str) -> Optional[str]:
@@ -608,7 +681,8 @@ async def get_host_status_record(target: str) -> Optional[Dict]:
             return {
                 "target": host_status.target,
                 "status": host_status.status,
-                "last_check": host_status.last_check,
+                "failure_count": host_status.failure_count or 0,
+                "last_check": to_local_iso(host_status.last_check),
             }
         return None
 
@@ -645,7 +719,7 @@ async def get_port_count_history(target: str, limit: int = 30) -> List[Dict]:
             open_ports = ports_result.scalars().all()
 
             history.append({
-                "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
+                "completed_at": to_local_iso(scan.completed_at),
                 "open_port_count": len(open_ports),
                 "host_status": scan.host_status,
             })

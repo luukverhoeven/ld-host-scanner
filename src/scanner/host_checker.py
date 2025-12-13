@@ -76,27 +76,50 @@ async def check_host_tcp_connect(
         return False
 
 
-async def check_host_ping(target: str, timeout: float = 2.0) -> bool:
-    """Check if host is reachable via ICMP ping.
+async def check_host_ping(target: str, timeout: float = 2.0, count: int = 1) -> bool:
+    """Check if host is reachable via ICMP ping using system ping command.
 
-    Uses icmplib with unprivileged mode (UDP-based) which doesn't require root.
+    Uses the system ping command which is more reliable than icmplib in Docker
+    containers with NET_RAW capability.
 
     Args:
         target: Hostname or IP address.
         timeout: Ping timeout in seconds.
+        count: Number of ping packets to send.
 
     Returns:
         True if host responds to ping, False otherwise.
     """
-    try:
-        from icmplib import async_ping
+    import platform
+    import shutil
 
-        result = await async_ping(target, count=1, timeout=timeout, privileged=False)
-        if result.is_alive:
-            logger.debug("Ping to %s successful (%.1fms)", target, result.avg_rtt)
+    ping_cmd = shutil.which("ping")
+    if not ping_cmd:
+        logger.warning("ping command not found in PATH")
+        return False
+
+    try:
+        # Platform-specific timeout args:
+        # Linux uses -W (seconds), macOS uses -W (milliseconds)
+        if platform.system() == "Darwin":
+            timeout_ms = int(timeout * 1000)
+            cmd = [ping_cmd, "-c", str(count), "-W", str(timeout_ms), target]
+        else:
+            # Linux
+            cmd = [ping_cmd, "-c", str(count), "-W", str(int(timeout)), target]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        returncode = await proc.wait()
+
+        if returncode == 0:
+            logger.debug("Ping to %s successful", target)
             return True
         else:
-            logger.debug("Ping to %s failed (no response)", target)
+            logger.debug("Ping to %s failed (exit code %d)", target, returncode)
             return False
     except Exception as e:
         logger.debug("Ping to %s failed: %s", target, e)

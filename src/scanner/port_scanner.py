@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 import nmap
 
 from src.config import settings
+from src.scanner.services import get_common_service_name
 from src.storage.database import (
     save_scan,
     save_ports,
@@ -122,12 +123,14 @@ class PortScanner:
                         for port_str in ports_str.split(","):
                             port_str = port_str.strip()
                             if port_str and port_str.isdigit():
+                                port_num = int(port_str)
                                 results["ports"].append({
-                                    "port": int(port_str),
+                                    "port": port_num,
                                     "protocol": "tcp",
                                     "state": "open",
                                     "service": "unknown",
                                     "version": "",
+                                    "common_service": get_common_service_name(port_num, "tcp"),
                                 })
 
         logger.info(
@@ -307,6 +310,7 @@ class PortScanner:
                     "state": "open",  # Normalize to "open" for consistency
                     "service": port_info.get("name", "unknown"),
                     "version": port_info.get("version", ""),
+                    "common_service": get_common_service_name(port_num, protocol),
                 })
 
         logger.info(
@@ -318,6 +322,106 @@ class PortScanner:
         )
 
         return results
+
+    def scan_single_port(
+        self,
+        target: str,
+        port: int,
+        protocol: str = "tcp",
+        intensity: str = "normal",
+    ) -> Dict:
+        """Scan a single port with detailed service detection using nmap.
+
+        Args:
+            target: Hostname or IP address to scan.
+            port: Port number to scan (1-65535).
+            protocol: Protocol ('tcp' or 'udp').
+            intensity: Service detection intensity ('light', 'normal', 'thorough').
+
+        Returns:
+            Dictionary with port info including service and version details.
+        """
+        import time
+
+        start_time = time.time()
+
+        try:
+            logger.info(
+                "Starting single port scan of %s:%d/%s (intensity: %s)",
+                target, port, protocol, intensity
+            )
+
+            # Build nmap arguments based on intensity
+            # -sS for TCP SYN scan, -sU for UDP
+            scan_type = "-sS" if protocol == "tcp" else "-sU"
+
+            # Version detection intensity
+            if intensity == "light":
+                version_args = "-sV --version-light"
+            elif intensity == "thorough":
+                version_args = "-sV --version-all"
+            else:  # normal
+                version_args = "-sV"
+
+            args = f"{scan_type} {version_args} -T4 --host-timeout 30s"
+
+            self.nm.scan(
+                hosts=target,
+                ports=str(port),
+                arguments=args,
+            )
+
+            duration = time.time() - start_time
+
+            # Parse results
+            result = {
+                "port": port,
+                "protocol": protocol,
+                "state": "closed",
+                "service": None,
+                "version": None,
+                "common_service": get_common_service_name(port, protocol),
+                "scan_duration": round(duration, 2),
+            }
+
+            # Check if host was found
+            if target not in self.nm.all_hosts():
+                # Try to find by resolved IP
+                for host in self.nm.all_hosts():
+                    if self.nm[host].hostname() == target:
+                        target = host
+                        break
+                else:
+                    logger.warning("Target %s not found in scan results", target)
+                    result["state"] = "unknown"
+                    return result
+
+            host = self.nm[target]
+
+            # Check if port was found in results
+            if protocol in host.all_protocols():
+                if port in host[protocol]:
+                    port_info = host[protocol][port]
+                    result["state"] = port_info.get("state", "unknown")
+                    result["service"] = port_info.get("name", "unknown")
+                    result["version"] = port_info.get("version", "")
+
+            logger.info(
+                "Single port scan completed: %s:%d/%s -> %s (%s) in %.2fs",
+                target, port, protocol,
+                result["state"],
+                result["service"] or "unknown",
+                duration,
+            )
+
+            return result
+
+        except nmap.PortScannerError as e:
+            logger.error("Single port scan failed: %s", e)
+            raise
+        except Exception as e:
+            logger.error("Unexpected error during single port scan: %s", e)
+            raise
 
 
 async def scan_tcp_parallel(target: str, workers: int = 4) -> Dict:
@@ -588,26 +692,40 @@ async def run_host_check() -> bool:
     current_status = result["status"]
     is_online = current_status == "online"
 
-    # Save status to database for dashboard
-    await save_host_status(target, current_status)
+    # Save status to database for dashboard (returns failure count)
+    failure_count = await save_host_status(target, current_status)
 
     # Update host status metric
     host_online_status.labels(target=target).set(1 if is_online else 0)
 
     logger.info(
-        "Host check for %s: %s (DNS: %s, TCP: %s, previous: %s)",
+        "Host check for %s: %s (DNS: %s, TCP: %s, previous: %s, failures: %d)",
         target,
         current_status,
         result["dns_resolved"],
         result["tcp_reachable"],
         previous_status or "unknown",
+        failure_count,
     )
 
-    # Only send notification on status CHANGE
+    # Only send notification on status CHANGE with threshold for offline
     if previous_status == "online" and current_status != "online":
-        # Host went offline
-        logger.warning("Host %s went OFFLINE (was online)", target)
-        await send_host_status_notification(target, "offline")
+        # Host appears offline - check failure threshold
+        threshold = settings.host_offline_threshold
+        if failure_count >= threshold:
+            logger.warning(
+                "Host %s went OFFLINE (was online, %d consecutive failures)",
+                target,
+                failure_count,
+            )
+            await send_host_status_notification(target, "offline")
+        else:
+            logger.info(
+                "Host %s check failed (%d/%d), waiting for confirmation",
+                target,
+                failure_count,
+                threshold,
+            )
     elif previous_status and previous_status != "online" and current_status == "online":
         # Host came back online
         logger.info("Host %s came back ONLINE", target)

@@ -38,6 +38,7 @@ async def dashboard(request: Request):
             "recent_scans": scans,
             "scan_interval": settings.scan_interval_hours,
             "expected_ports_status": expected_ports_status,
+            "timezone": settings.display_timezone,
         },
     )
 
@@ -55,5 +56,6 @@ async def history(request: Request):
             "target": settings.target_host,
             "changes": changes,
             "scans": scans,
+            "timezone": settings.display_timezone,
         },
     )
