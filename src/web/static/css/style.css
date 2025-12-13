@@ -526,3 +526,124 @@ body {
 .rescan-status.error {
     color: var(--danger-color);
 }
+
+/* Scan Progress */
+.scan-progress {
+    margin-top: 1rem;
+    padding: 1rem;
+    background-color: var(--light-color);
+    border-radius: var(--border-radius);
+}
+
+.scan-progress.hidden {
+    display: none;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background-color: #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--primary-dark));
+    width: 0%;
+    transition: width 0.3s ease;
+    animation: progress-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+#progress-phase {
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+#progress-ports {
+    color: var(--gray-color);
+    font-family: 'Courier New', Courier, monospace;
+}
+
+/* Scan Detail Page */
+.scan-detail {
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.scan-detail h1 {
+    margin-bottom: 0.5rem;
+}
+
+.scan-detail .back-link {
+    display: inline-block;
+    margin-bottom: 1.5rem;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.scan-detail .back-link:hover {
+    text-decoration: underline;
+}
+
+.scan-metadata {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.scan-metadata dt {
+    font-weight: 600;
+    color: var(--gray-color);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+}
+
+.scan-metadata dd {
+    font-size: 1.1rem;
+    margin-left: 0;
+}
+
+.changes-section {
+    margin-bottom: 2rem;
+}
+
+.changes-section h2 {
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.change-opened {
+    background-color: rgba(231, 76, 60, 0.1);
+}
+
+.change-closed {
+    background-color: rgba(39, 174, 96, 0.1);
+}
+
+/* Clickable table rows */
+tr.clickable {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+tr.clickable:hover {
+    background-color: var(--light-color);
+}

@@ -1,10 +1,13 @@
 """REST API routes."""
 
 import asyncio
+import json
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from src.config import settings
 from src.storage.database import (
@@ -14,6 +17,7 @@ from src.storage.database import (
     get_port_history,
     get_port_count_history,
     update_port_service,
+    get_scan_progress,
 )
 from src.scheduler.job_scheduler import trigger_manual_scan, get_jobs_info
 from src.scanner.port_scanner import PortScanner
@@ -136,6 +140,66 @@ async def trigger_scan(background_tasks: BackgroundTasks):
         message=message,
         status="queued",
     )
+
+
+@router.get("/scans/running")
+async def get_running_scan():
+    """Get the currently running scan if any.
+
+    Returns the scan_id and progress of any currently running scan.
+    Useful for connecting to the progress stream after triggering a scan.
+    """
+    # Get most recent scans and find one that's running
+    scans = await get_recent_scans(limit=5, offset=0)
+    for scan in scans:
+        if scan.get("status") == "running":
+            progress = await get_scan_progress(scan["scan_id"])
+            return progress
+    return None
+
+
+@router.get("/scans/{scan_id}/progress")
+async def scan_progress_stream(scan_id: str):
+    """Stream scan progress via Server-Sent Events (SSE).
+
+    Returns real-time updates of scan progress including:
+    - current_phase: starting, scanning, enriching, saving, completed
+    - tcp_ports_found: number of TCP ports discovered
+    - udp_ports_found: number of UDP ports discovered
+    - status: running, completed, failed
+    """
+    async def event_generator():
+        while True:
+            progress = await get_scan_progress(scan_id)
+
+            if not progress:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": "Scan not found"}),
+                }
+                break
+
+            if progress["status"] == "completed":
+                yield {
+                    "event": "complete",
+                    "data": json.dumps(progress),
+                }
+                break
+            elif progress["status"] == "failed":
+                yield {
+                    "event": "error",
+                    "data": json.dumps(progress),
+                }
+                break
+
+            yield {
+                "event": "progress",
+                "data": json.dumps(progress),
+            }
+
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/jobs", response_model=List[JobResponse])

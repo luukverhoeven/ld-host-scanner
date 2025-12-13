@@ -37,6 +37,11 @@ class Scan(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Progress tracking fields
+    current_phase = Column(String(20), nullable=True)  # 'starting', 'tcp', 'udp', 'saving', 'completed'
+    tcp_ports_found = Column(Integer, nullable=True, default=0)
+    udp_ports_found = Column(Integer, nullable=True, default=0)
+
     # Relationships
     ports = relationship("Port", back_populates="scan", cascade="all, delete-orphan")
     changes = relationship("PortChange", back_populates="scan", cascade="all, delete-orphan")

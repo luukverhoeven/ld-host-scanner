@@ -18,6 +18,7 @@ from src.storage.database import (
     detect_changes,
     get_previous_missing_expected_ports,
     detect_newly_missing_expected_ports,
+    update_scan_progress,
 )
 from src.metrics import (
     scans_total,
@@ -671,11 +672,14 @@ async def run_full_scan() -> Optional[str]:
     scanner = PortScanner()
 
     try:
-        # Save scan as running
+        # Save scan as running with initial phase
         await save_scan(scan_id, target, "full", started_at, "running")
+        await update_scan_progress(scan_id, "starting", 0, 0)
 
         # Run TCP (Rustscan) and UDP (nmap) scans concurrently
         # Rustscan is much faster than nmap for TCP port discovery
+        await update_scan_progress(scan_id, "scanning", 0, 0)
+
         tcp_task = asyncio.to_thread(
             scanner.scan_tcp_rustscan, target, "1-65535"
         )
@@ -687,6 +691,11 @@ async def run_full_scan() -> Optional[str]:
 
         # Execute both scans concurrently
         tcp_results, udp_results = await asyncio.gather(tcp_task, udp_task)
+
+        # Update progress with port counts
+        tcp_port_count = len(tcp_results.get("ports", []))
+        udp_port_count = len(udp_results.get("ports", []))
+        await update_scan_progress(scan_id, "enriching", tcp_port_count, udp_port_count)
 
         # Optional: Enrich TCP service/version info after fast Rustscan discovery.
         if settings.tcp_service_enrichment and tcp_results.get("ports"):
@@ -715,6 +724,11 @@ async def run_full_scan() -> Optional[str]:
         tcp_up = tcp_results["host_status"] == "up" or len(tcp_results["ports"]) > 0
         udp_up = udp_results["host_status"] == "up" or len(udp_results["ports"]) > 0
         host_status = "up" if (tcp_up or udp_up) else "down"
+
+        # Update progress before saving
+        tcp_port_count = len(tcp_results.get("ports", []))
+        udp_port_count = len(udp_results.get("ports", []))
+        await update_scan_progress(scan_id, "saving", tcp_port_count, udp_port_count)
 
         # Save ports to database
         await save_ports(scan_id, all_ports)

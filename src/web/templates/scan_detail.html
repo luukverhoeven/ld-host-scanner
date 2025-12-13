@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Scan Details - Security Scanner{% endblock %}
+
+{% block content %}
+<div class="scan-detail">
+    <a href="/" class="back-link">&larr; Back to Dashboard</a>
+
+    <h1>Scan Details</h1>
+
+    <!-- Scan Metadata -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Scan Information</h2>
+        </div>
+        <div class="card-body">
+            <dl class="scan-metadata">
+                <div>
+                    <dt>Scan ID</dt>
+                    <dd><code>{{ scan.scan_id[:8] }}...</code></dd>
+                </div>
+                <div>
+                    <dt>Target</dt>
+                    <dd><code>{{ scan.target }}</code></dd>
+                </div>
+                <div>
+                    <dt>Type</dt>
+                    <dd>{{ scan.scan_type|upper }}</dd>
+                </div>
+                <div>
+                    <dt>Status</dt>
+                    <dd><span class="badge badge-{{ scan.status }}">{{ scan.status }}</span></dd>
+                </div>
+                <div>
+                    <dt>Host Status</dt>
+                    <dd><span class="badge badge-{{ scan.host_status or 'unknown' }}">{{ (scan.host_status or 'unknown')|upper }}</span></dd>
+                </div>
+                <div>
+                    <dt>Started</dt>
+                    <dd><span class="timestamp" data-time="{{ scan.started_at }}">{{ scan.started_at }}</span></dd>
+                </div>
+                <div>
+                    <dt>Completed</dt>
+                    <dd>
+                        {% if scan.completed_at %}
+                        <span class="timestamp" data-time="{{ scan.completed_at }}">{{ scan.completed_at }}</span>
+                        {% else %}
+                        -
+                        {% endif %}
+                    </dd>
+                </div>
+                <div>
+                    <dt>Duration</dt>
+                    <dd>{{ duration or '-' }}</dd>
+                </div>
+            </dl>
+        </div>
+    </div>
+
+    <!-- Port Changes (if any) -->
+    {% if changes %}
+    <div class="card changes-section">
+        <div class="card-header">
+            <h2>Changes from Previous Scan</h2>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Port</th>
+                            <th>Protocol</th>
+                            <th>Change</th>
+                            <th>Service</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for change in changes %}
+                        <tr class="change-{{ change.change_type }}">
+                            <td><code>{{ change.port }}</code></td>
+                            <td>{{ change.protocol|upper }}</td>
+                            <td><span class="badge badge-{{ change.change_type }}">{{ change.change_type }}</span></td>
+                            <td>{{ change.service or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- All Open Ports -->
+    <div class="card">
+        <div class="card-header">
+            <h2>Open Ports ({{ ports|length }})</h2>
+        </div>
+        <div class="card-body">
+            {% if ports %}
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Port</th>
+                            <th>Protocol</th>
+                            <th>Service</th>
+                            <th>Version</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for port in ports %}
+                        <tr>
+                            <td><code>{{ port.port }}</code></td>
+                            <td>{{ port.protocol|upper }}</td>
+                            <td>
+                                {%- if port.service and port.service != 'unknown' -%}
+                                    {{ port.service }}
+                                    {%- if port.common_service and port.common_service != port.service %} <span class="common-service">({{ port.common_service }})</span>{% endif -%}
+                                {%- elif port.common_service -%}
+                                    <span class="unknown-service">unknown</span> <span class="common-service">({{ port.common_service }})</span>
+                                {%- else -%}
+                                    <span class="unknown-service">unknown</span>
+                                {%- endif -%}
+                            </td>
+                            <td>{{ port.version or '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="no-data">No open ports found</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if scan.error_message %}
+    <div class="card">
+        <div class="card-header">
+            <h2>Error</h2>
+        </div>
+        <div class="card-body">
+            <pre class="error-message">{{ scan.error_message }}</pre>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

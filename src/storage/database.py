@@ -56,6 +56,10 @@ async def run_migrations() -> None:
         ("ports", "common_service", "ALTER TABLE ports ADD COLUMN common_service VARCHAR(50)"),
         # Add failure_count column to host_status table
         ("host_status", "failure_count", "ALTER TABLE host_status ADD COLUMN failure_count INTEGER DEFAULT 0"),
+        # Add progress tracking columns to scans table
+        ("scans", "current_phase", "ALTER TABLE scans ADD COLUMN current_phase VARCHAR(20)"),
+        ("scans", "tcp_ports_found", "ALTER TABLE scans ADD COLUMN tcp_ports_found INTEGER DEFAULT 0"),
+        ("scans", "udp_ports_found", "ALTER TABLE scans ADD COLUMN udp_ports_found INTEGER DEFAULT 0"),
     ]
 
     async with engine.begin() as conn:
@@ -119,6 +123,47 @@ async def save_scan(
 
         await session.commit()
         return scan
+
+
+async def update_scan_progress(
+    scan_id: str,
+    current_phase: str,
+    tcp_ports_found: int = 0,
+    udp_ports_found: int = 0,
+) -> None:
+    """Update scan progress for real-time tracking."""
+    async with await get_session() as session:
+        result = await session.execute(
+            select(Scan).where(Scan.scan_id == scan_id)
+        )
+        scan = result.scalar_one_or_none()
+
+        if scan:
+            scan.current_phase = current_phase
+            scan.tcp_ports_found = tcp_ports_found
+            scan.udp_ports_found = udp_ports_found
+            await session.commit()
+
+
+async def get_scan_progress(scan_id: str) -> Optional[Dict]:
+    """Get current scan progress for SSE streaming."""
+    async with await get_session() as session:
+        result = await session.execute(
+            select(Scan).where(Scan.scan_id == scan_id)
+        )
+        scan = result.scalar_one_or_none()
+
+        if not scan:
+            return None
+
+        return {
+            "scan_id": scan.scan_id,
+            "status": scan.status,
+            "current_phase": scan.current_phase or "starting",
+            "tcp_ports_found": scan.tcp_ports_found or 0,
+            "udp_ports_found": scan.udp_ports_found or 0,
+            "host_status": scan.host_status,
+        }
 
 
 async def save_ports(scan_id: str, ports: List[Dict]) -> None:
@@ -332,6 +377,28 @@ async def get_port_history(limit: int = 50) -> List[Dict]:
         return [
             {
                 "scan_id": c.scan_id,
+                "port": c.port,
+                "protocol": c.protocol,
+                "change_type": c.change_type,
+                "service": c.service,
+                "detected_at": to_local_iso(c.detected_at),
+            }
+            for c in changes
+        ]
+
+
+async def get_changes_for_scan(scan_id: str) -> List[Dict]:
+    """Get port changes detected in a specific scan."""
+    async with await get_session() as session:
+        result = await session.execute(
+            select(PortChange)
+            .where(PortChange.scan_id == scan_id)
+            .order_by(desc(PortChange.detected_at))
+        )
+        changes = result.scalars().all()
+
+        return [
+            {
                 "port": c.port,
                 "protocol": c.protocol,
                 "change_type": c.change_type,

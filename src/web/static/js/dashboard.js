@@ -2,18 +2,116 @@
  * Dashboard JavaScript
  */
 
+// Active SSE connection
+let progressEventSource = null;
+
+// Phase display names
+const PHASE_NAMES = {
+    'starting': 'Starting scan...',
+    'scanning': 'Scanning ports...',
+    'enriching': 'Detecting services...',
+    'saving': 'Saving results...',
+    'completed': 'Scan complete!'
+};
+
+// Update progress UI
+function updateProgressUI(data) {
+    const progressDiv = document.getElementById('scan-progress');
+    const phaseSpan = document.getElementById('progress-phase');
+    const portsSpan = document.getElementById('progress-ports');
+    const progressFill = document.getElementById('progress-fill');
+
+    if (!progressDiv) return;
+
+    // Show progress div
+    progressDiv.classList.remove('hidden');
+
+    // Update phase text
+    phaseSpan.textContent = PHASE_NAMES[data.current_phase] || data.current_phase;
+
+    // Update port counts
+    portsSpan.textContent = `TCP: ${data.tcp_ports_found || 0} | UDP: ${data.udp_ports_found || 0}`;
+
+    // Update progress bar based on phase
+    const phaseProgress = {
+        'starting': 10,
+        'scanning': 40,
+        'enriching': 60,
+        'saving': 80,
+        'completed': 100
+    };
+    progressFill.style.width = (phaseProgress[data.current_phase] || 0) + '%';
+}
+
+// Start SSE progress stream
+function startProgressStream(scanId) {
+    if (progressEventSource) {
+        progressEventSource.close();
+    }
+
+    progressEventSource = new EventSource(`/api/scans/${scanId}/progress`);
+
+    progressEventSource.addEventListener('progress', (e) => {
+        const data = JSON.parse(e.data);
+        updateProgressUI(data);
+    });
+
+    progressEventSource.addEventListener('complete', (e) => {
+        const data = JSON.parse(e.data);
+        updateProgressUI(data);
+        progressEventSource.close();
+        progressEventSource = null;
+
+        // Reload page after brief delay to show completion
+        setTimeout(() => {
+            window.location.reload();
+        }, 1500);
+    });
+
+    progressEventSource.addEventListener('error', (e) => {
+        progressEventSource.close();
+        progressEventSource = null;
+
+        // Reload page on error
+        setTimeout(() => {
+            window.location.reload();
+        }, 2000);
+    });
+}
+
+// Poll for running scan and start progress stream
+async function pollForRunningScan(maxAttempts = 10) {
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            const response = await fetch('/api/scans/running');
+            if (response.ok) {
+                const data = await response.json();
+                if (data && data.scan_id) {
+                    startProgressStream(data.scan_id);
+                    return true;
+                }
+            }
+        } catch (error) {
+            console.error('Error polling for running scan:', error);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    return false;
+}
+
 // Trigger manual scan
 async function triggerScan() {
     const button = document.getElementById('trigger-scan');
     const statusDiv = document.getElementById('scan-status');
+    const progressDiv = document.getElementById('scan-progress');
 
     // Disable button
     button.disabled = true;
     button.innerHTML = '<span class="btn-icon">&#9203;</span> Scanning...';
 
-    // Show status
+    // Show initial status
     statusDiv.classList.remove('hidden', 'success', 'error');
-    statusDiv.textContent = 'Scan triggered, please wait...';
+    statusDiv.textContent = 'Triggering scan...';
     statusDiv.classList.add('success');
 
     try {
@@ -27,13 +125,22 @@ async function triggerScan() {
         const data = await response.json();
 
         if (response.ok) {
-            statusDiv.textContent = data.message + '. Page will refresh in 5 seconds...';
-            statusDiv.classList.add('success');
+            statusDiv.textContent = data.message;
 
-            // Refresh page after 5 seconds
-            setTimeout(() => {
-                window.location.reload();
-            }, 5000);
+            // Show progress div and poll for the running scan
+            if (progressDiv) {
+                progressDiv.classList.remove('hidden');
+            }
+
+            // Poll for the running scan and start progress stream
+            const found = await pollForRunningScan();
+            if (!found) {
+                // Fallback: reload after timeout if no running scan found
+                statusDiv.textContent = 'Scan running, refreshing soon...';
+                setTimeout(() => {
+                    window.location.reload();
+                }, 5000);
+            }
         } else {
             throw new Error(data.detail || 'Failed to trigger scan');
         }
@@ -42,7 +149,10 @@ async function triggerScan() {
         statusDiv.classList.remove('success');
         statusDiv.classList.add('error');
 
-        // Re-enable button on error
+        // Hide progress and re-enable button on error
+        if (progressDiv) {
+            progressDiv.classList.add('hidden');
+        }
         button.disabled = false;
         button.innerHTML = '<span class="btn-icon">&#9654;</span> Trigger Manual Scan';
     }

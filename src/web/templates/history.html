@@ -75,7 +75,7 @@
                     </thead>
                     <tbody>
                         {% for scan in scans %}
-                        <tr>
+                        <tr class="clickable" onclick="window.location='/scan/{{ scan.scan_id }}'">
                             <td><code class="scan-id">{{ scan.scan_id[:8] }}...</code></td>
                             <td>
                                 <span class="timestamp" data-time="{{ scan.started_at }}">

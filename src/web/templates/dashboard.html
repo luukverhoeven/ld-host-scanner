@@ -102,6 +102,17 @@
                     Auto-scan every <strong>{{ scan_interval }}</strong> hours
                 </p>
                 <div id="scan-status" class="scan-status hidden"></div>
+
+                <!-- Scan Progress (hidden by default) -->
+                <div id="scan-progress" class="scan-progress hidden">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <div class="progress-info">
+                        <span id="progress-phase">Starting scan...</span>
+                        <span id="progress-ports">TCP: 0 | UDP: 0</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -184,7 +195,7 @@
                     </thead>
                     <tbody>
                         {% for scan in recent_scans %}
-                        <tr>
+                        <tr class="clickable" onclick="window.location='/scan/{{ scan.scan_id }}'">
                             <td>
                                 <span class="timestamp" data-time="{{ scan.completed_at or scan.started_at }}">
                                     {{ scan.completed_at or scan.started_at }}
