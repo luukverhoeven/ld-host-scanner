@@ -44,6 +44,14 @@ services:
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
 
+      # Expected ports monitoring
+      - EXPECTED_PORTS=${EXPECTED_PORTS:-}
+
+      # WireGuard verification
+      - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY:-}
+      - WIREGUARD_PROBE_PORTS=${WIREGUARD_PROBE_PORTS:-}
+      - WIREGUARD_SCANNER_PRIVATE_KEY=${WIREGUARD_SCANNER_PRIVATE_KEY:-}
+
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 30s
