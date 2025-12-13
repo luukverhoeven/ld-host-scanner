@@ -1,7 +1,13 @@
 # LD Host Scanner
 
-A Docker-based network security scanner that monitors your home network for open ports and online status. Runs automated scans every 2 hours and sends alerts via email and webhooks (Discord/Slack).
-
+This codebase is a FastAPI web app + APScheduler service that periodically scans a
+  configured TARGET_HOST for open TCP/UDP ports (Rustscan for fast TCP discovery, nmap
+  for UDP and optional service/version enrichment), stores results and diffs in an SQLite
+  database, exposes a dashboard + REST API to view scan history/progress, and sends
+  notifications (email/webhook) when ports change or expected ports go missing. It also
+  runs lightweight host online checks between full scans and includes special handling for
+  “silent” UDP services like WireGuard (stealth/probe verification).
+  
 ## Features
 
 - **Full spectrum port scanning**: TCP (1-65535) and UDP (top 1000 ports)
