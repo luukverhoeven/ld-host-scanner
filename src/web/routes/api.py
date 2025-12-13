@@ -19,6 +19,9 @@ from src.storage.database import (
     get_host_status_history,
     update_port_service,
     get_scan_progress,
+    get_scan_logs,
+    get_all_scan_logs,
+    get_event_logs,
 )
 from src.scheduler.job_scheduler import trigger_manual_scan, get_jobs_info
 from src.scanner.port_scanner import PortScanner
@@ -297,3 +300,161 @@ async def rescan_port(
             status_code=500,
             detail=f"Port rescan failed: {str(e)}",
         )
+
+
+# ============================================================================
+# Logs API Endpoints
+# ============================================================================
+
+
+class LogEntryResponse(BaseModel):
+    """Log entry response model."""
+    timestamp: Optional[str] = None
+    message: str
+    log_type: Optional[str] = None
+    level: Optional[str] = None
+    logger: Optional[str] = None
+
+
+class ScanLogResponse(BaseModel):
+    """Scan log entry response model."""
+    id: int
+    scan_id: str
+    timestamp: str
+    message: str
+    log_type: str
+
+
+class EventLogResponse(BaseModel):
+    """Event log response model."""
+    event_type: str
+    timestamp: Optional[str] = None
+    message: str
+    details: Optional[dict] = None
+
+
+@router.get("/logs/app", response_model=List[LogEntryResponse])
+async def get_app_logs(
+    lines: int = Query(100, ge=1, le=1000, description="Number of lines to return"),
+    level: Optional[str] = Query(None, pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$", description="Filter by log level"),
+):
+    """Get recent application logs from the log file.
+
+    Reads the last N lines from the rotating log file. Supports filtering by log level.
+    """
+    log_file = settings.data_dir / "logs" / "app.log"
+
+    if not log_file.exists():
+        return []
+
+    try:
+        # Read file and get last N lines
+        with open(log_file, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+
+        # Parse log lines (support both text and JSON formats)
+        log_entries = []
+        for line in all_lines[-lines:]:
+            line = line.strip()
+            if not line:
+                continue
+
+            entry = {"message": line}
+
+            # Try to parse as JSON first
+            if line.startswith("{"):
+                try:
+                    data = json.loads(line)
+                    entry = {
+                        "timestamp": data.get("timestamp"),
+                        "message": data.get("message", line),
+                        "level": data.get("level"),
+                        "logger": data.get("logger"),
+                        "log_type": data.get("level", "").lower() if data.get("level") else None,
+                    }
+                except json.JSONDecodeError:
+                    pass
+            else:
+                # Parse text format: "2025-12-13 22:30:45,123 - logger - LEVEL - message"
+                parts = line.split(" - ", 3)
+                if len(parts) >= 4:
+                    entry = {
+                        "timestamp": parts[0],
+                        "logger": parts[1],
+                        "level": parts[2],
+                        "message": parts[3],
+                        "log_type": parts[2].lower() if parts[2] else None,
+                    }
+                elif len(parts) >= 3:
+                    entry = {
+                        "timestamp": parts[0],
+                        "level": parts[1],
+                        "message": parts[2],
+                        "log_type": parts[1].lower() if parts[1] else None,
+                    }
+
+            # Apply level filter
+            if level and entry.get("level") != level:
+                continue
+
+            log_entries.append(entry)
+
+        # Return in reverse order (newest first)
+        log_entries.reverse()
+        return log_entries
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read log file: {str(e)}",
+        )
+
+
+@router.get("/logs/scan/{scan_id}", response_model=List[ScanLogResponse])
+async def get_scan_activity_logs(
+    scan_id: str,
+    limit: int = Query(100, ge=1, le=500, description="Maximum entries to return"),
+):
+    """Get activity logs for a specific scan.
+
+    Returns the activity log entries saved during scan execution.
+    """
+    logs = await get_scan_logs(scan_id, limit=limit)
+    return logs
+
+
+@router.get("/logs/scans", response_model=List[ScanLogResponse])
+async def get_all_scans_logs(
+    limit: int = Query(100, ge=1, le=500, description="Maximum entries to return"),
+    offset: int = Query(0, ge=0, description="Number of entries to skip"),
+    log_type: Optional[str] = Query(None, pattern="^(info|success|warning|error)$", description="Filter by log type"),
+):
+    """Get activity logs across all scans.
+
+    Returns scan activity log entries from all scans, newest first.
+    """
+    logs = await get_all_scan_logs(limit=limit, offset=offset, log_type=log_type)
+    return logs
+
+
+@router.get("/logs/events", response_model=List[EventLogResponse])
+async def get_events(
+    limit: int = Query(50, ge=1, le=200, description="Maximum entries to return"),
+    offset: int = Query(0, ge=0, description="Number of entries to skip"),
+    event_type: Optional[str] = Query(
+        None,
+        pattern="^(scan|notification|port_change|host_check)$",
+        description="Filter by event type",
+    ),
+):
+    """Get combined event logs from all sources.
+
+    Combines events from scans, notifications, port changes, and host status checks
+    into a unified timeline view, sorted by timestamp (newest first).
+    """
+    events = await get_event_logs(
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+    )
+    return events

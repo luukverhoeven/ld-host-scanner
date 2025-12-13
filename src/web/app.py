@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from src.config import settings
-from src.storage.database import init_database
+from src.storage.database import init_database, cleanup_stale_running_scans
 from src.scheduler.job_scheduler import start_scheduler, shutdown_scheduler
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,11 @@ async def lifespan(app: FastAPI):
     # Initialize database
     await init_database()
     logger.info("Database initialized")
+
+    # Clean up any stale running scans from previous session
+    cleaned = await cleanup_stale_running_scans()
+    if cleaned:
+        logger.info("Cleaned up %d stale running scan(s)", cleaned)
 
     # Start scheduler
     start_scheduler()

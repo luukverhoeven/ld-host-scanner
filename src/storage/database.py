@@ -11,7 +11,7 @@ from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from src.config import settings, to_local_iso
-from src.storage.models import Base, Scan, Port, PortChange, Notification, HostStatus, HostStatusHistory
+from src.storage.models import Base, Scan, Port, PortChange, Notification, HostStatus, HostStatusHistory, ScanLog
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,43 @@ async def run_migrations() -> None:
                     logger.info("Migration: Added column %s.%s", table, column)
                 except Exception as e:
                     logger.warning("Migration failed for %s.%s: %s", table, column, e)
+
+
+async def cleanup_stale_running_scans() -> int:
+    """Mark any running scans as failed (called on startup).
+
+    When the application restarts, any scans that were in 'running' status
+    are stale and should be marked as failed since they were interrupted.
+
+    Returns:
+        Number of stale scans that were cleaned up.
+    """
+    async with await get_session() as session:
+        result = await session.execute(
+            select(Scan).where(Scan.status == "running")
+        )
+        stale_scans = result.scalars().all()
+        count = 0
+        for scan in stale_scans:
+            scan.status = "failed"
+            scan.error_message = "Scan interrupted by application restart"
+            scan.completed_at = datetime.utcnow()
+            count += 1
+        await session.commit()
+        return count
+
+
+async def has_running_scan() -> bool:
+    """Check if there's already a scan running.
+
+    Returns:
+        True if a scan is currently running, False otherwise.
+    """
+    async with await get_session() as session:
+        result = await session.execute(
+            select(Scan).where(Scan.status == "running")
+        )
+        return result.scalar_one_or_none() is not None
 
 
 async def get_session() -> AsyncSession:
@@ -1018,3 +1055,212 @@ async def get_host_status_history(target: str, limit: int = 30) -> List[Dict]:
         # Reverse to get chronological order (oldest first for chart)
         history.reverse()
         return history
+
+
+async def save_scan_log(
+    scan_id: str,
+    message: str,
+    log_type: str = "info",
+) -> None:
+    """Save a scan activity log entry to the database.
+
+    Args:
+        scan_id: The scan identifier.
+        message: Log message.
+        log_type: Type of log entry ('info', 'success', 'warning', 'error').
+    """
+    async with await get_session() as session:
+        log_entry = ScanLog(
+            scan_id=scan_id,
+            message=message,
+            log_type=log_type,
+            timestamp=datetime.utcnow(),
+        )
+        session.add(log_entry)
+        await session.commit()
+
+
+async def get_scan_logs(scan_id: str, limit: int = 100) -> List[Dict]:
+    """Get activity logs for a specific scan.
+
+    Args:
+        scan_id: The scan identifier.
+        limit: Maximum number of log entries to return.
+
+    Returns:
+        List of log entries (oldest first).
+    """
+    async with await get_session() as session:
+        result = await session.execute(
+            select(ScanLog)
+            .where(ScanLog.scan_id == scan_id)
+            .order_by(ScanLog.timestamp.asc())
+            .limit(limit)
+        )
+        logs = result.scalars().all()
+
+        return [
+            {
+                "id": log.id,
+                "scan_id": log.scan_id,
+                "timestamp": to_local_iso(log.timestamp),
+                "message": log.message,
+                "log_type": log.log_type,
+            }
+            for log in logs
+        ]
+
+
+async def get_all_scan_logs(
+    limit: int = 100,
+    offset: int = 0,
+    log_type: Optional[str] = None,
+) -> List[Dict]:
+    """Get scan activity logs across all scans.
+
+    Args:
+        limit: Maximum number of log entries to return.
+        offset: Number of entries to skip.
+        log_type: Optional filter by log type.
+
+    Returns:
+        List of log entries (newest first).
+    """
+    async with await get_session() as session:
+        query = select(ScanLog).order_by(desc(ScanLog.timestamp))
+
+        if log_type:
+            query = query.where(ScanLog.log_type == log_type)
+
+        query = query.offset(offset).limit(limit)
+        result = await session.execute(query)
+        logs = result.scalars().all()
+
+        return [
+            {
+                "id": log.id,
+                "scan_id": log.scan_id,
+                "timestamp": to_local_iso(log.timestamp),
+                "message": log.message,
+                "log_type": log.log_type,
+            }
+            for log in logs
+        ]
+
+
+async def get_event_logs(
+    limit: int = 50,
+    offset: int = 0,
+    event_type: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+) -> List[Dict]:
+    """Get combined event logs from multiple sources.
+
+    Args:
+        limit: Maximum number of entries to return.
+        offset: Number of entries to skip.
+        event_type: Filter by event type ('scan', 'notification', 'port_change', 'host_check').
+        date_from: Start date filter.
+        date_to: End date filter.
+
+    Returns:
+        List of events (newest first), combining scans, notifications, port changes, and host checks.
+    """
+    events = []
+
+    async with await get_session() as session:
+        # Get scans
+        if not event_type or event_type == "scan":
+            scan_query = select(Scan).order_by(desc(Scan.started_at))
+            if date_from:
+                scan_query = scan_query.where(Scan.started_at >= date_from)
+            if date_to:
+                scan_query = scan_query.where(Scan.started_at <= date_to)
+            scan_query = scan_query.limit(limit)
+            result = await session.execute(scan_query)
+            for scan in result.scalars().all():
+                events.append({
+                    "event_type": "scan",
+                    "timestamp": to_local_iso(scan.started_at),
+                    "message": f"Scan {scan.status}: {scan.target} ({scan.scan_type})",
+                    "details": {
+                        "scan_id": scan.scan_id,
+                        "status": scan.status,
+                        "target": scan.target,
+                        "host_status": scan.host_status,
+                        "error_message": scan.error_message,
+                    },
+                })
+
+        # Get notifications
+        if not event_type or event_type == "notification":
+            notif_query = select(Notification).order_by(desc(Notification.sent_at))
+            if date_from:
+                notif_query = notif_query.where(Notification.sent_at >= date_from)
+            if date_to:
+                notif_query = notif_query.where(Notification.sent_at <= date_to)
+            notif_query = notif_query.limit(limit)
+            result = await session.execute(notif_query)
+            for notif in result.scalars().all():
+                events.append({
+                    "event_type": "notification",
+                    "timestamp": to_local_iso(notif.sent_at),
+                    "message": f"Notification {notif.status}: {notif.notification_type} - {notif.subject or 'No subject'}",
+                    "details": {
+                        "notification_type": notif.notification_type,
+                        "status": notif.status,
+                        "subject": notif.subject,
+                        "error_message": notif.error_message,
+                    },
+                })
+
+        # Get port changes
+        if not event_type or event_type == "port_change":
+            change_query = select(PortChange).order_by(desc(PortChange.detected_at))
+            if date_from:
+                change_query = change_query.where(PortChange.detected_at >= date_from)
+            if date_to:
+                change_query = change_query.where(PortChange.detected_at <= date_to)
+            change_query = change_query.limit(limit)
+            result = await session.execute(change_query)
+            for change in result.scalars().all():
+                events.append({
+                    "event_type": "port_change",
+                    "timestamp": to_local_iso(change.detected_at),
+                    "message": f"Port {change.change_type}: {change.port}/{change.protocol} ({change.service or 'unknown'})",
+                    "details": {
+                        "port": change.port,
+                        "protocol": change.protocol,
+                        "change_type": change.change_type,
+                        "service": change.service,
+                        "scan_id": change.scan_id,
+                    },
+                })
+
+        # Get host status checks
+        if not event_type or event_type == "host_check":
+            host_query = select(HostStatusHistory).order_by(desc(HostStatusHistory.checked_at))
+            if date_from:
+                host_query = host_query.where(HostStatusHistory.checked_at >= date_from)
+            if date_to:
+                host_query = host_query.where(HostStatusHistory.checked_at <= date_to)
+            host_query = host_query.limit(limit)
+            result = await session.execute(host_query)
+            for check in result.scalars().all():
+                events.append({
+                    "event_type": "host_check",
+                    "timestamp": to_local_iso(check.checked_at),
+                    "message": f"Host check: {check.target} is {check.status} (method: {check.check_method or 'unknown'})",
+                    "details": {
+                        "target": check.target,
+                        "status": check.status,
+                        "dns_resolved": check.dns_resolved,
+                        "tcp_reachable": check.tcp_reachable,
+                        "check_method": check.check_method,
+                    },
+                })
+
+    # Sort all events by timestamp (newest first) and apply pagination
+    events.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+    return events[offset:offset + limit]

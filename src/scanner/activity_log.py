@@ -1,14 +1,17 @@
 """In-memory activity log storage for scan progress tracking.
 
 This module provides thread-safe storage for activity logs during scans.
-Logs are stored in-memory to avoid database write overhead and are
-automatically cleaned up after scan completion.
+Logs are stored both in-memory (for real-time UI updates) and persisted
+to the database (for historical viewing in the Logs page).
 """
 
 import asyncio
+import logging
 from collections import defaultdict, deque
 from datetime import datetime
 from typing import Any, Deque, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Maximum log entries to keep per scan (prevents memory bloat)
 MAX_LOG_ENTRIES = 100
@@ -45,6 +48,9 @@ async def add_log_entry(
 ) -> None:
     """Add a log entry for the given scan.
 
+    Logs are stored in-memory for real-time UI updates and also
+    persisted to the database for historical viewing.
+
     Args:
         scan_id: The scan identifier.
         message: Log message text.
@@ -57,6 +63,14 @@ async def add_log_entry(
             "type": entry_type,
         }
         _activity_logs[scan_id].append(entry)
+
+    # Persist to database for historical viewing (non-blocking)
+    try:
+        from src.storage.database import save_scan_log
+        await save_scan_log(scan_id, message, entry_type)
+    except Exception as e:
+        # Don't fail the scan if database write fails
+        logger.warning("Failed to persist scan log entry: %s", e)
 
 
 def add_log_entry_sync(

@@ -3,6 +3,7 @@
 import logging
 import sys
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 import uvicorn
 
@@ -10,8 +11,26 @@ from src.config import settings
 
 
 def configure_logging():
-    """Configure logging based on settings."""
+    """Configure logging based on settings.
+
+    Logs are written to both stdout (for container logs) and a rotating
+    log file (for the web UI logs viewer).
+    """
     log_level = getattr(logging, settings.log_level.upper())
+
+    # Ensure logs directory exists
+    log_dir = settings.data_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "app.log"
+
+    # Create handlers
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=5 * 1024 * 1024,  # 5MB
+        backupCount=3,
+        encoding="utf-8",
+    )
 
     if settings.log_format == "json":
         from pythonjsonlogger import jsonlogger
@@ -26,21 +45,23 @@ def configure_logging():
                 log_record["logger"] = record.name
                 log_record["service"] = "ld-host-scanner"
 
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(CustomJsonFormatter(
+        formatter = CustomJsonFormatter(
             "%(timestamp)s %(level)s %(name)s %(message)s"
-        ))
-        logging.root.handlers = []
-        logging.root.addHandler(handler)
-        logging.root.setLevel(log_level)
-    else:
-        logging.basicConfig(
-            level=log_level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            handlers=[
-                logging.StreamHandler(sys.stdout),
-            ],
         )
+        stdout_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
+    else:
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        stdout_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
+
+    # Configure root logger
+    logging.root.handlers = []
+    logging.root.addHandler(stdout_handler)
+    logging.root.addHandler(file_handler)
+    logging.root.setLevel(log_level)
 
 
 # Configure logging

@@ -146,3 +146,19 @@ class HostStatusHistory(Base):
     __table_args__ = (
         Index("idx_host_history_target_time", "target", "checked_at"),
     )
+
+
+class ScanLog(Base):
+    """Persistent scan activity log entries."""
+
+    __tablename__ = "scan_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_id = Column(String(36), nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    message = Column(Text, nullable=False)
+    log_type = Column(String(20), nullable=False)  # 'info', 'success', 'warning', 'error'
+
+    __table_args__ = (
+        Index("idx_scan_logs_scan_id_time", "scan_id", "timestamp"),
+    )

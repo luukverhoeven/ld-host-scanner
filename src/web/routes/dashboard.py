@@ -108,3 +108,22 @@ async def scan_detail(request: Request, scan_id: str):
             "timezone": settings.display_timezone,
         },
     )
+
+
+@router.get("/logs", response_class=HTMLResponse)
+async def logs_page(request: Request):
+    """Logs viewer page.
+
+    Provides tabs for viewing:
+    - Application logs (container stdout)
+    - Scan activity logs (per-scan progress)
+    - Event history (scans, notifications, port changes, host checks)
+    """
+    return templates.TemplateResponse(
+        "logs.html",
+        {
+            "request": request,
+            "target": settings.target_host,
+            "timezone": settings.display_timezone,
+        },
+    )

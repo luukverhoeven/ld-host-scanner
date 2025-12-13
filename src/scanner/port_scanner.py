@@ -27,6 +27,7 @@ from src.storage.database import (
     get_previous_missing_expected_ports,
     detect_newly_missing_expected_ports,
     update_scan_progress,
+    has_running_scan,
 )
 from src.metrics import (
     scans_total,
@@ -79,7 +80,10 @@ class PortScanner:
         if not wireguard_probe_ports:
             return
 
-        probe = WireGuardProbe(settings.wireguard_public_key)
+        probe = WireGuardProbe(
+            settings.wireguard_public_key,
+            settings.wireguard_scanner_private_key,
+        )
 
         for port_entry in ports:
             port_num = port_entry["port"]
@@ -776,8 +780,13 @@ async def run_full_scan(trigger_source: str = "scheduled") -> Optional[str]:
         trigger_source: How the scan was triggered - 'manual' or 'scheduled'.
 
     Returns:
-        Scan ID if successful, None if failed.
+        Scan ID if successful, None if failed or skipped.
     """
+    # Check if a scan is already running
+    if await has_running_scan():
+        logger.warning("Scan skipped - another scan is already running")
+        return None
+
     # Import here to avoid circular imports
     from src.notifications.notifier import (
         send_notifications,

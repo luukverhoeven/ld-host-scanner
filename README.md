@@ -1,5 +1,8 @@
 # LD Host Scanner
 
+[![Tests](https://github.com/luukverhoeven/ld-host-scanner/actions/workflows/test.yml/badge.svg)](https://github.com/luukverhoeven/ld-host-scanner/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/luukverhoeven/ld-host-scanner/branch/main/graph/badge.svg)](https://codecov.io/gh/luukverhoeven/ld-host-scanner)
+
 This codebase is a FastAPI web app + APScheduler service that periodically scans a
   configured TARGET_HOST for open TCP/UDP ports (Rustscan for fast TCP discovery, nmap
   for UDP and optional service/version enrichment), stores results and diffs in an SQLite
@@ -112,8 +115,9 @@ Open your browser to: **http://localhost:8080**
 | `UDP_VERSION_DETECTION_INTENSITY` | `light` | UDP version detection intensity (`light|normal|thorough`) |
 | `UDP_VERSION_DETECTION_PORTS_LIMIT` | `50` | Max UDP ports to version-scan per run |
 | `EXPECTED_PORTS` | - | Ports that should be open (e.g., `80/tcp,443/tcp,448/udp`) |
-| `WIREGUARD_PUBLIC_KEY` | - | WireGuard server public key (base64) for probe verification. **Quote the value** as it contains `=` |
-| `WIREGUARD_PROBE_PORTS` | - | Ports to probe for WireGuard (e.g., `448,51820`) - must be explicitly set |
+| `WIREGUARD_PUBLIC_KEY` | - | WireGuard server public key (base64) for probe verification |
+| `WIREGUARD_PROBE_PORTS` | - | Ports to probe for WireGuard (e.g., `448,51820`) |
+| `WIREGUARD_SCANNER_PRIVATE_KEY` | - | Scanner's private key (base64) for authenticated probes |
 
 ### Scan Intervals
 
@@ -144,20 +148,49 @@ Some services like WireGuard are designed to be "silent" - they don't respond to
 - Dashboard shows a yellow "stealth" badge with tooltip
 - This means: "We expect this service to be running, but can't verify it"
 
-**WireGuard Verification (Optional):**
+**WireGuard Verification (Recommended):**
 
-If you want to actively verify WireGuard is running, provide the server's public key:
+For reliable WireGuard monitoring, set up authenticated probes. This requires:
+1. The WireGuard server's public key
+2. A scanner keypair (the scanner must be added as a peer on the server)
+
+**Step 1: Generate scanner keypair**
 
 ```bash
-# In .env
-EXPECTED_PORTS=448/udp
-# Quote the key - it contains = characters (base64 padding)
-WIREGUARD_PUBLIC_KEY="<your-wireguard-server-public-key-base64>"
+docker-compose run --rm --no-deps ld-host-scanner python3 -c "
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+import base64
+private_key = X25519PrivateKey.generate()
+print('Private (for .env):', base64.b64encode(private_key.private_bytes_raw()).decode())
+print('Public (for server):', base64.b64encode(private_key.public_key().public_bytes_raw()).decode())
+"
 ```
 
-The scanner will send a WireGuard handshake probe. If WireGuard responds (even with a rate-limit cookie), it's marked as "verified" instead of "stealth".
+**Step 2: Add scanner as peer on WireGuard server**
 
-**Note:** WireGuard only responds to properly encrypted handshakes. Without the public key, the scanner can only detect "no ICMP rejection" which indicates something is listening but can't confirm it's WireGuard.
+```bash
+# On your WireGuard server
+sudo wg set wg0 peer <SCANNER_PUBLIC_KEY> allowed-ips 10.255.255.254/32
+```
+
+**Step 3: Configure scanner .env**
+
+```bash
+# WireGuard monitoring
+EXPECTED_PORTS=446/udp
+WIREGUARD_PROBE_PORTS=446
+WIREGUARD_PUBLIC_KEY="<server-public-key-base64>"
+WIREGUARD_SCANNER_PRIVATE_KEY="<scanner-private-key-base64>"
+```
+
+**How it works:**
+- Scanner sends a cryptographically valid WireGuard handshake initiation
+- Server recognizes the scanner as a known peer and responds
+- Response confirms WireGuard is running (marked as "verified")
+- If no response, port is marked "stealth" and alerts are sent
+
+**Without scanner keypair:**
+The scanner can only detect "no ICMP rejection" which indicates something is listening, but can't confirm it's actually WireGuard responding. Firewalls that drop packets silently will cause false positives.
 
 ## API Endpoints
 

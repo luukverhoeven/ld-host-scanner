@@ -5,6 +5,26 @@ All notable changes to LD Host Scanner will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-12-13
+
+### Added
+- **Authenticated WireGuard probes** with full Noise_IKpsk2 handshake protocol
+- **`WIREGUARD_SCANNER_PRIVATE_KEY`** config option for scanner identity
+- Scanner can now be added as a WireGuard peer for reliable service verification
+- WireGuard ports show "verified (handshake_response)" when server responds
+
+### Changed
+- WireGuard probe now implements proper cryptographic handshake (DH, ChaCha20-Poly1305 AEAD)
+- Improved WireGuard detection reliability - no longer depends on firewall behavior
+- Updated README with step-by-step WireGuard verification setup guide
+
+### Technical
+- Added `_dh()` method for X25519 Diffie-Hellman key exchange
+- Added `_aead_encrypt()` method for ChaCha20-Poly1305 encryption
+- Added Noise protocol helpers: `_blake2s_hash()`, `_blake2s_hmac()`, `_hkdf_blake2s()`
+- Added `_tai64n_timestamp()` for WireGuard timestamp format
+- Separated static and ephemeral keypairs in WireGuardProbe class
+
 ## [1.1.0] - 2025-12-13
 
 ### Added

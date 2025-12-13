@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     # WireGuard verification (optional)
     wireguard_public_key: Optional[str] = None  # Server's public key (base64)
     wireguard_probe_ports: Optional[str] = None  # Ports to probe, e.g., "448,51820"
+    wireguard_scanner_private_key: Optional[str] = None  # Scanner's private key (base64)
 
     @property
     def wireguard_probe_ports_list(self) -> List[int]:

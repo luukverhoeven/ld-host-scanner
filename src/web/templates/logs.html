@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - Security Scanner{% endblock %}
+
+{% block content %}
+<div class="logs-page">
+    <div class="page-header">
+        <h1>System Logs</h1>
+        <p>Monitoring: <code>{{ target }}</code></p>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="logs-tabs">
+        <button class="log-tab active" data-tab="app-logs">
+            <i data-lucide="terminal"></i>
+            <span>App Logs</span>
+        </button>
+        <button class="log-tab" data-tab="scan-logs">
+            <i data-lucide="radar"></i>
+            <span>Scan Logs</span>
+        </button>
+        <button class="log-tab" data-tab="events">
+            <i data-lucide="calendar"></i>
+            <span>Events</span>
+        </button>
+    </div>
+
+    <!-- App Logs Tab -->
+    <div class="log-tab-content active" id="app-logs">
+        <div class="card">
+            <div class="card-header">
+                <h2>Application Logs</h2>
+                <div class="log-controls">
+                    <select id="app-log-level" class="log-filter">
+                        <option value="">All Levels</option>
+                        <option value="DEBUG">DEBUG</option>
+                        <option value="INFO">INFO</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="ERROR">ERROR</option>
+                        <option value="CRITICAL">CRITICAL</option>
+                    </select>
+                    <input type="number" id="app-log-lines" class="log-filter" value="100" min="10" max="1000" title="Number of lines">
+                    <button class="btn btn-sm" id="refresh-app-logs">
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh
+                    </button>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="app-auto-refresh">
+                        Auto-refresh
+                    </label>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="log-container" id="app-log-container">
+                    <div class="log-loading">Loading logs...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scan Logs Tab -->
+    <div class="log-tab-content" id="scan-logs">
+        <div class="card">
+            <div class="card-header">
+                <h2>Scan Activity Logs</h2>
+                <div class="log-controls">
+                    <select id="scan-log-type" class="log-filter">
+                        <option value="">All Types</option>
+                        <option value="info">Info</option>
+                        <option value="success">Success</option>
+                        <option value="warning">Warning</option>
+                        <option value="error">Error</option>
+                    </select>
+                    <button class="btn btn-sm" id="refresh-scan-logs">
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="log-container" id="scan-log-container">
+                    <div class="log-loading">Loading logs...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Events Tab -->
+    <div class="log-tab-content" id="events">
+        <div class="card">
+            <div class="card-header">
+                <h2>Event History</h2>
+                <div class="log-controls">
+                    <select id="event-type" class="log-filter">
+                        <option value="">All Events</option>
+                        <option value="scan">Scans</option>
+                        <option value="notification">Notifications</option>
+                        <option value="port_change">Port Changes</option>
+                        <option value="host_check">Host Checks</option>
+                    </select>
+                    <button class="btn btn-sm" id="refresh-events">
+                        <i data-lucide="refresh-cw"></i>
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="log-container events-container" id="events-container">
+                    <div class="log-loading">Loading events...</div>
+                </div>
+                <div class="log-pagination">
+                    <button class="btn btn-sm" id="load-more-events">Load More</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/logs.js"></script>
+{% endblock %}
