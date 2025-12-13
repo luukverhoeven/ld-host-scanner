@@ -65,6 +65,7 @@ class Port(Base):
     service = Column(String(100), nullable=True)
     version = Column(String(200), nullable=True)
     common_service = Column(String(50), nullable=True)  # Common service from lookup
+    is_stealth = Column(Boolean, default=False)  # Expected port that can't be verified (WireGuard, etc.)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

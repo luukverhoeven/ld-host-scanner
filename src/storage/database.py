@@ -68,6 +68,8 @@ async def run_migrations() -> None:
         ("scans", "current_phase", "ALTER TABLE scans ADD COLUMN current_phase VARCHAR(20)"),
         ("scans", "tcp_ports_found", "ALTER TABLE scans ADD COLUMN tcp_ports_found INTEGER DEFAULT 0"),
         ("scans", "udp_ports_found", "ALTER TABLE scans ADD COLUMN udp_ports_found INTEGER DEFAULT 0"),
+        # Add is_stealth column for UDP stealth services (WireGuard, etc.)
+        ("ports", "is_stealth", "ALTER TABLE ports ADD COLUMN is_stealth BOOLEAN DEFAULT 0"),
     ]
 
     async with engine.begin() as conn:
@@ -199,6 +201,7 @@ async def save_ports(scan_id: str, ports: List[Dict]) -> None:
                 service=port_data.get("service"),
                 version=port_data.get("version"),
                 common_service=port_data.get("common_service"),
+                is_stealth=port_data.get("is_stealth", False),
             )
             session.add(port)
         await session.commit()
@@ -322,6 +325,7 @@ async def get_recent_scans(limit: int = 20, offset: int = 0) -> List[Dict]:
                         "service": p.service,
                         "version": p.version,
                         "common_service": p.common_service,
+                        "is_stealth": p.is_stealth or False,
                     }
                     for p in ports
                 ],
@@ -370,6 +374,7 @@ async def get_scan_by_id(scan_id: str) -> Optional[Dict]:
                     "service": p.service,
                     "version": p.version,
                     "common_service": p.common_service,
+                    "is_stealth": p.is_stealth or False,
                 }
                 for p in ports
             ],
@@ -484,6 +489,7 @@ async def get_current_status(target: str) -> Optional[Dict]:
                     "protocol": p.protocol,
                     "service": p.service,
                     "common_service": p.common_service,
+                    "is_stealth": p.is_stealth or False,
                 }
                 for p in ports
             ],

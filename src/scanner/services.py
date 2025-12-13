@@ -148,6 +148,7 @@ COMMON_PORTS: Dict[tuple, Dict[str, str]] = {
     # VPN
     (1194, "tcp"): {"service": "openvpn", "description": "OpenVPN"},
     (1194, "udp"): {"service": "openvpn", "description": "OpenVPN"},
+    (448, "udp"): {"service": "wireguard", "description": "WireGuard VPN (custom port)"},
     (51820, "udp"): {"service": "wireguard", "description": "WireGuard VPN"},
     (500, "udp"): {"service": "isakmp", "description": "IPsec IKE"},
     (4500, "udp"): {"service": "ipsec-nat", "description": "IPsec NAT-T"},

@@ -24,7 +24,7 @@ def configure_logging():
                 log_record["timestamp"] = datetime.utcnow().isoformat() + "Z"
                 log_record["level"] = record.levelname
                 log_record["logger"] = record.name
-                log_record["service"] = "security-scanner"
+                log_record["service"] = "ld-host-scanner"
 
         handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(CustomJsonFormatter(
@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Run the application."""
-    logger.info("Starting Security Scanner")
+    logger.info("Starting LD Host Scanner")
     logger.info("Target: %s", settings.target_host)
     logger.info("Scan interval: %d hours", settings.scan_interval_hours)
     logger.info("SMTP configured: %s", settings.smtp_configured)

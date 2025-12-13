@@ -24,6 +24,9 @@ aiosmtplib~=3.0.0
 pydantic~=2.5.0
 pydantic-settings~=2.1.0
 
+# Cryptography (for WireGuard probe)
+cryptography~=42.0.0
+
 # Form handling
 python-multipart~=0.0.6
 

@@ -140,6 +140,9 @@
                             <td><code>{{ port.port }}</code></td>
                             <td>{{ port.protocol|upper }}</td>
                             <td class="service-cell">
+                                {%- if port.is_stealth -%}
+                                    <span class="badge badge-stealth" title="Stealth service - expected but cannot verify (service doesn't respond to probes)">stealth</span>
+                                {%- endif -%}
                                 {%- if port.service and port.service != 'unknown' -%}
                                     {{ port.service }}
                                     {%- if port.common_service and port.common_service != port.service %} <span class="common-service">({{ port.common_service }})</span>{% endif -%}

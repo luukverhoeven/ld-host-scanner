@@ -1,4 +1,4 @@
-# Security Scanner
+# LD Host Scanner
 
 A Docker-based network security scanner that monitors your home network for open ports and online status. Runs automated scans every 2 hours and sends alerts via email and webhooks (Discord/Slack).
 
@@ -7,6 +7,9 @@ A Docker-based network security scanner that monitors your home network for open
 - **Full spectrum port scanning**: TCP (1-65535) and UDP (top 1000 ports)
 - **Online/offline detection**: Quick checks every 15 minutes
 - **Automated scheduling**: Configurable scan intervals (default: 2 hours)
+- **Expected ports monitoring**: Alert when critical services go down
+- **Stealth service detection**: Track services like WireGuard that don't respond to probes
+- **WireGuard verification**: Optional handshake probe to verify VPN is running
 - **Email notifications**: SMTP alerts with HTML reports
 - **Webhook notifications**: Discord and Slack compatible
 - **Web dashboard**: Real-time status and scan history
@@ -20,7 +23,7 @@ A Docker-based network security scanner that monitors your home network for open
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd security-scan-external
+cd ld-host-scanner
 
 # Copy example environment file
 cp .env.example .env
@@ -39,7 +42,7 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your-email@gmail.com
 SMTP_PASSWORD=your-app-password
-SMTP_FROM=Security Scanner <your-email@gmail.com>
+SMTP_FROM=LD Host Scanner <your-email@gmail.com>
 SMTP_TO=alerts@example.com
 
 # Discord webhook
@@ -90,12 +93,52 @@ Open your browser to: **http://localhost:8080**
 | `UDP_VERSION_DETECTION` | `true` | Run UDP version detection on prioritized ports |
 | `UDP_VERSION_DETECTION_INTENSITY` | `light` | UDP version detection intensity (`light|normal|thorough`) |
 | `UDP_VERSION_DETECTION_PORTS_LIMIT` | `50` | Max UDP ports to version-scan per run |
+| `EXPECTED_PORTS` | - | Ports that should be open (e.g., `80/tcp,443/tcp,448/udp`) |
+| `WIREGUARD_PUBLIC_KEY` | - | WireGuard server public key (base64) for probe verification |
+| `WIREGUARD_PROBE_PORTS` | - | Ports to probe for WireGuard (default: 448, 51820) |
 
 ### Scan Intervals
 
 - **Full scan**: Every 2 hours (configurable via `SCAN_INTERVAL_HOURS`)
 - **Host check**: Every 15 minutes (quick online/offline check)
 - **Initial scan**: Runs immediately on container startup
+
+### Expected Ports Monitoring
+
+Monitor critical services and get alerts when they go down:
+
+```bash
+# In .env
+EXPECTED_PORTS=80/tcp,443/tcp,22/tcp,448/udp
+```
+
+Features:
+- **UDP ports are explicitly scanned** even if not in nmap's top-N (e.g., port 448)
+- **Alerts only on state change** - notifies when a port goes from open to closed
+- **Dashboard shows status** - expected ports card with open/missing indicators
+
+### Stealth Services & WireGuard
+
+Some services like WireGuard are designed to be "silent" - they don't respond to port scans. The scanner handles these with special detection:
+
+**Stealth Detection:**
+- Ports that return "open|filtered" AND are in your expected list are marked as "stealth"
+- Dashboard shows a yellow "stealth" badge with tooltip
+- This means: "We expect this service to be running, but can't verify it"
+
+**WireGuard Verification (Optional):**
+
+If you want to actively verify WireGuard is running, provide the server's public key:
+
+```bash
+# In .env
+EXPECTED_PORTS=448/udp
+WIREGUARD_PUBLIC_KEY=<your-wireguard-server-public-key-base64>
+```
+
+The scanner will send a WireGuard handshake probe. If WireGuard responds (even with a rate-limit cookie), it's marked as "verified" instead of "stealth".
+
+**Note:** WireGuard only responds to properly encrypted handshakes. Without the public key, the scanner can only detect "no ICMP rejection" which indicates something is listening but can't confirm it's WireGuard.
 
 ## API Endpoints
 
@@ -139,22 +182,22 @@ Tests run inside Docker to ensure the correct environment with all dependencies:
 
 ```bash
 # Run all tests
-docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" security-scanner \
+docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" ld-host-scanner \
   sh -c "pip install -q pytest pytest-asyncio && python -m pytest tests/ -v"
 
 # Run with coverage
-docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" security-scanner \
+docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" ld-host-scanner \
   sh -c "pip install -q pytest pytest-asyncio pytest-cov && python -m pytest tests/ --cov=src --cov-report=term-missing"
 
 # Run a single test file
-docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" security-scanner \
+docker-compose run --rm --no-deps -v "$(pwd)/tests:/app/tests" ld-host-scanner \
   sh -c "pip install -q pytest pytest-asyncio && python -m pytest tests/test_port_scanner.py -v"
 ```
 
 ## Project Structure
 
 ```
-security-scan-external/
+ld-host-scanner/
 ├── docker/
 │   └── Dockerfile
 ├── docker-compose.yml
@@ -196,7 +239,7 @@ Rich embeds showing:
 
 Check logs:
 ```bash
-docker-compose logs security-scanner
+docker-compose logs ld-host-scanner
 ```
 
 ### Scans not running

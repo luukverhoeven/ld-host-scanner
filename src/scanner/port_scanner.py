@@ -49,6 +49,52 @@ class PortScanner:
             return "-sV --version-all"
         return "-sV"
 
+    def _probe_wireguard_ports(self, target: str, ports: List[Dict]) -> None:
+        """Probe discovered ports for WireGuard service verification.
+
+        Updates port entries in-place with verification results.
+
+        Args:
+            target: Target hostname or IP.
+            ports: List of discovered port dictionaries to check.
+        """
+        from src.scanner.wireguard_probe import WireGuardProbe
+
+        # Get ports to probe
+        wireguard_probe_ports = set(settings.wireguard_probe_ports_list)
+
+        # Also probe ports identified as wireguard by service name
+        for port_entry in ports:
+            if port_entry.get("common_service") == "wireguard":
+                wireguard_probe_ports.add(port_entry["port"])
+
+        if not wireguard_probe_ports:
+            return
+
+        probe = WireGuardProbe(settings.wireguard_public_key)
+
+        for port_entry in ports:
+            port_num = port_entry["port"]
+            if port_num not in wireguard_probe_ports:
+                continue
+
+            logger.info("Probing WireGuard on %s:%d", target, port_num)
+            result = probe.probe(target, port_num)
+
+            if result["verified"]:
+                # WireGuard responded - definitely running
+                port_entry["is_stealth"] = False
+                port_entry["version"] = f"verified ({result['response_type']})"
+                logger.info(
+                    "WireGuard verified on %s:%d: %s",
+                    target, port_num, result["message"],
+                )
+            else:
+                logger.debug(
+                    "WireGuard probe on %s:%d: %s",
+                    target, port_num, result["message"],
+                )
+
     def _find_nmap_target_key(self, target: str) -> Optional[str]:
         """Resolve the target key used in python-nmap results."""
         if target in self.nm.all_hosts():
@@ -254,19 +300,39 @@ class PortScanner:
             Dictionary with host_status and list of discovered ports.
         """
         try:
+            # Get expected UDP ports to ensure they're always scanned
+            expected_udp_ports = [
+                str(p["port"]) for p in settings.expected_ports_list
+                if p["protocol"] == "udp"
+            ]
+
             udp_scope = ports if ports else "top 1000"
+            if expected_udp_ports:
+                udp_scope += f" + expected: {','.join(expected_udp_ports)}"
             logger.info("Starting UDP scan of %s (%s)", target, udp_scope)
 
             # Phase 1: Discovery scan (no version detection for speed).
             discovery_args = f"-sU -Pn -T{settings.scan_timing} --max-retries 1"
-            if not ports:
+
+            # Build port specification
+            if ports:
+                # Custom port range provided
+                scan_ports = ports
+            else:
+                # Use top-ports + any expected UDP ports
                 discovery_args += f" --top-ports {settings.udp_top_ports}"
+                # Append expected ports explicitly so they're always scanned
+                if expected_udp_ports:
+                    scan_ports = ",".join(expected_udp_ports)
+                else:
+                    scan_ports = None
+
             if settings.scan_min_rate > 0:
                 udp_rate = max(100, settings.scan_min_rate // 2)
                 discovery_args += f" --min-rate {udp_rate}"
             discovery_args += f" --host-timeout {settings.scan_host_timeout}"
 
-            self.nm.scan(hosts=target, ports=ports, arguments=discovery_args)
+            self.nm.scan(hosts=target, ports=scan_ports, arguments=discovery_args)
 
             target_key = self._find_nmap_target_key(target)
             if not target_key:
@@ -280,6 +346,12 @@ class PortScanner:
             discovered_ports: List[Dict] = []
             discovered_raw_states: Dict[int, str] = {}
 
+            # Build set of expected UDP ports for stealth detection
+            expected_udp_set = {
+                p["port"] for p in settings.expected_ports_list
+                if p["protocol"] == "udp"
+            }
+
             if "udp" in host.all_protocols():
                 for port_num in host["udp"].keys():
                     port_info = host["udp"][port_num]
@@ -288,6 +360,14 @@ class PortScanner:
                         continue
 
                     discovered_raw_states[port_num] = raw_state
+
+                    # Mark as stealth if: expected port + "open|filtered" state
+                    # Stealth services (like WireGuard) don't respond to probes
+                    is_stealth = (
+                        raw_state == "open|filtered" and
+                        port_num in expected_udp_set
+                    )
+
                     discovered_ports.append({
                         "port": port_num,
                         "protocol": "udp",
@@ -295,6 +375,7 @@ class PortScanner:
                         "service": port_info.get("name", "unknown"),
                         "version": "",
                         "common_service": get_common_service_name(port_num, "udp"),
+                        "is_stealth": is_stealth,
                     })
 
             # Phase 2: Optional version detection on a small subset of ports.
@@ -355,6 +436,10 @@ class PortScanner:
                             continue
                         port_entry["service"] = version_entry.get("service", port_entry["service"])
                         port_entry["version"] = version_entry.get("version", port_entry["version"])
+
+            # Phase 3: WireGuard probe verification (if configured)
+            if settings.wireguard_configured and discovered_ports:
+                self._probe_wireguard_ports(target, discovered_ports)
 
             logger.info(
                 "UDP scan completed. Found %d UDP ports on %s (host: %s)",

@@ -6,7 +6,7 @@ from prometheus_client import Counter, Gauge, Histogram, Info
 app_info = Info("security_scanner", "Application information")
 app_info.info({
     "version": "1.0.0",
-    "service": "security-scanner",
+    "service": "ld-host-scanner",
 })
 
 # Scan metrics

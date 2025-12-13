@@ -1,11 +1,11 @@
 version: '3.8'
 
 services:
-  security-scanner:
+  ld-host-scanner:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    container_name: security-scanner
+    container_name: ld-host-scanner
     restart: unless-stopped
 
     # Required capabilities for nmap scanning
@@ -60,4 +60,4 @@ services:
 # Optional: Add network for isolation
 networks:
   default:
-    name: security-scanner-network
+    name: ld-host-scanner-network

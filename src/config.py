@@ -69,6 +69,28 @@ class Settings(BaseSettings):
     udp_version_detection_intensity: str = "light"  # "light", "normal", "thorough"
     udp_version_detection_ports_limit: int = 50
 
+    # WireGuard verification (optional)
+    wireguard_public_key: Optional[str] = None  # Server's public key (base64)
+    wireguard_probe_ports: Optional[str] = None  # Ports to probe, e.g., "448,51820"
+
+    @property
+    def wireguard_probe_ports_list(self) -> List[int]:
+        """Parse WireGuard probe ports into list of integers.
+
+        If not configured, defaults to expected UDP ports with wireguard service.
+        """
+        if self.wireguard_probe_ports:
+            return [int(p.strip()) for p in self.wireguard_probe_ports.split(",") if p.strip()]
+        # Default: check expected UDP ports that are known WireGuard ports
+        wireguard_default_ports = {448, 51820}
+        expected_udp = [p["port"] for p in self.expected_ports_list if p["protocol"] == "udp"]
+        return [p for p in expected_udp if p in wireguard_default_ports]
+
+    @property
+    def wireguard_configured(self) -> bool:
+        """Check if WireGuard verification is configured."""
+        return bool(self.wireguard_public_key)
+
     # Data storage
     data_dir: Path = Path("/app/data")
 
