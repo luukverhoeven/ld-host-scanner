@@ -11,6 +11,8 @@ This codebase is a FastAPI web app + APScheduler service that periodically scans
   runs lightweight host online checks between full scans and includes special handling for
   “silent” UDP services like WireGuard (stealth/probe verification).
   
+![Screen1.png](docs/Screen1.png)
+
 ## Features
 
 - **Full spectrum port scanning**: TCP (1-65535) and UDP (top 1000 ports)
