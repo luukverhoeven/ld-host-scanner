@@ -21,7 +21,7 @@ httpx~=0.28.1
 aiosmtplib~=5.0.0
 
 # Configuration
-pydantic~=2.5.0
+pydantic~=2.12.5
 pydantic-settings~=2.1.0
 
 # Cryptography (for WireGuard probe)
